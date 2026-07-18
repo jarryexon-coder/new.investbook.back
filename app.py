@@ -28,7 +28,32 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
-CORS(app)
+
+# ✅ Single CORS configuration - allow all origins for development
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "http://localhost:3000",
+            "http://localhost:5000",
+            "https://investbook-production.up.railway.app",
+            "https://investbook-web.vercel.app",
+            "*"  # Allow all during development
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        "allow_headers": [
+            "Content-Type",
+            "Authorization",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+            "Access-Control-Allow-Origin"
+        ],
+        "expose_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True,
+        "max_age": 3600
+    }
+})
+
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Error handlers
