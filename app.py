@@ -29,32 +29,13 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
-# ✅ Single CORS configuration - allow all origins for development
-CORS(app, resources={
-    r"/*": {
-        "origins": [
-            "http://localhost:3000",
-            "http://localhost:5000",
-            "https://investbook-production.up.railway.app",
-            "https://investbook-web.vercel.app",
-            "*"  # Allow all during development
-        ],
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-        "allow_headers": [
-            "Content-Type",
-            "Authorization",
-            "X-Requested-With",
-            "Accept",
-            "Origin",
-            "Access-Control-Allow-Origin"
-        ],
-        "expose_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True,
-        "max_age": 3600
-    }
-})
+# ✅ Simple CORS - Allow all
+CORS(app, origins=["http://localhost:3000", "http://localhost:5000"])
 
+# ✅ KEEP THIS - For SocketIO (real-time features)
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# ❌ REMOVED the duplicate CORS(app) call that was here
 
 # Error handlers
 @app.errorhandler(404)
@@ -282,6 +263,41 @@ def express_interest(current_user, deal_id):
     db.session.add(interest)
     db.session.commit()
     return jsonify({'message': 'Interest expressed'}), 201
+
+@app.route('/api/deals/<int:deal_id>/messages', methods=['GET'])
+@token_required
+def get_messages(deal_id):
+    """Get messages for a deal"""
+    try:
+        messages = Message.query.filter_by(deal_id=deal_id).order_by(Message.created_at).all()
+        return jsonify([m.to_dict() for m in messages])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/messages', methods=['POST'])
+@token_required
+def send_message(deal_id):
+    """Send a message in a deal chat"""
+    try:
+        data = request.json
+        message = Message(
+            deal_id=deal_id,
+            user_id=current_user.id,
+            text=data.get('text'),
+            image=data.get('image')
+        )
+        db.session.add(message)
+        db.session.commit()
+        
+        # Notify via WebSocket
+        socketio.emit('new_message', {
+            'deal_id': deal_id,
+            'message': message.to_dict()
+        }, room=f'deal_{deal_id}')
+        
+        return jsonify(message.to_dict()), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/deals/<int:deal_id>/interested', methods=['GET'])
 @token_required
