@@ -262,25 +262,62 @@ def register():
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    email = data.get('email')
-    password = data.get('password')
-    
-    print(f"🔍 Login attempt: {email}")  # <-- Debug log
-    
-    user = User.query.filter_by(email=email).first()
-    if user:
-        print(f"✅ User found: {user.username}")  # <-- Debug log
-        # Check password
-        is_valid = bcrypt.check_password_hash(user.password, password)
-        print(f"🔑 Password valid: {is_valid}")  # <-- Debug log
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'message': 'No data provided'}), 400
+            
+        email = data.get('email')
+        password = data.get('password')
         
-        if is_valid:
-            # Generate token...
-            return jsonify({'token': token, 'user': user_data}), 200
-    
-    print(f"❌ Login failed for: {email}")  # <-- Debug log
-    return jsonify({'message': 'Invalid credentials'}), 401
+        if not email or not password:
+            return jsonify({'message': 'Email and password required'}), 400
+        
+        print(f"🔍 Login attempt: {email}")
+        
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            print(f"❌ User not found: {email}")
+            return jsonify({'message': 'Invalid credentials'}), 401
+        
+        print(f"✅ User found: {user.username}")
+        
+        # ✅ FIX: Use password_hash, not password
+        try:
+            is_valid = bcrypt.check_password_hash(user.password_hash, password)
+            print(f"🔑 Password valid: {is_valid}")
+        except Exception as e:
+            print(f"❌ Password check error: {str(e)}")
+            return jsonify({'message': 'Invalid credentials'}), 401
+        
+        if not is_valid:
+            print(f"❌ Invalid password for: {email}")
+            return jsonify({'message': 'Invalid credentials'}), 401
+        
+        # ✅ FIX: Generate token before using it
+        token = jwt.encode({
+            'user_id': user.id,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+        }, app.config['SECRET_KEY'], algorithm='HS256')
+        
+        # ✅ FIX: Create user_data before using it
+        user_data = {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'trust_score': user.trust_score
+        }
+        
+        return jsonify({
+            'token': token,
+            'user': user_data
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Login error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 @app.route('/api/deals', methods=['GET'])
 def get_deals():
