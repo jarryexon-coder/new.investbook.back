@@ -9,4 +9,4 @@ cmds = [
 ]
 
 [phases.start]
-cmd = "/opt/venv/bin/python app.py"
+cmd = "python app.py"
