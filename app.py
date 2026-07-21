@@ -263,24 +263,23 @@ def register():
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
-    user = User.query.filter_by(email=data.get('email')).first()
+    email = data.get('email')
+    password = data.get('password')
     
-    if user and bcrypt.check_password_hash(user.password, data.get('password')):
-        # Generate token with user_id
-        token = jwt.encode({
-            'user_id': user.id,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-        }, app.config['SECRET_KEY'], algorithm='HS256')
+    print(f"🔍 Login attempt: {email}")  # <-- Debug log
+    
+    user = User.query.filter_by(email=email).first()
+    if user:
+        print(f"✅ User found: {user.username}")  # <-- Debug log
+        # Check password
+        is_valid = bcrypt.check_password_hash(user.password, password)
+        print(f"🔑 Password valid: {is_valid}")  # <-- Debug log
         
-        return jsonify({
-            'token': token,
-            'user': {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email
-            }
-        }), 200
+        if is_valid:
+            # Generate token...
+            return jsonify({'token': token, 'user': user_data}), 200
     
+    print(f"❌ Login failed for: {email}")  # <-- Debug log
     return jsonify({'message': 'Invalid credentials'}), 401
 
 @app.route('/api/deals', methods=['GET'])
