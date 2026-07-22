@@ -7,10 +7,9 @@ from app import app, db, User, token_required
 # Initialize Stripe with your secret key from environment
 stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
 
-# Your Price IDs
 PRICE_IDS = {
-    'monthly': 'price_1Tvq829OUuvX0WP5OaHexOvw',
-    'yearly': 'price_1Tvq8t9OUuvX0WP5Fa3DJEQL',
+    'monthly': 'price_1TvrSV6reX536Z4svFuyvgL0',  # ✅ Sandbox Monthly
+    'yearly': 'price_1TvrT26reX536Z4sAjXLF9fp',   # ✅ Sandbox Yearly
 }
 
 SUBSCRIPTION_PLANS = {
@@ -19,14 +18,14 @@ SUBSCRIPTION_PLANS = {
         'name': 'Monthly',
         'price': 4.99,
         'interval': 'month',
-        'price_id': 'price_1Tvq829OUuvX0WP5OaHexOvw'
+        'price_id': 'price_1TvrSV6reX536Z4svFuyvgL0'
     },
     'yearly': {
         'id': 'yearly',
         'name': 'Yearly',
         'price': 49.99,
         'interval': 'year',
-        'price_id': 'price_1Tvq8t9OUuvX0WP5Fa3DJEQL'
+        'price_id': 'price_1TvrT26reX536Z4sAjXLF9fp'
     }
 }
 
