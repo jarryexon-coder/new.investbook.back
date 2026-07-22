@@ -12,7 +12,7 @@ import datetime
 from functools import wraps
 import os
 from dotenv import load_dotenv
-# Add these imports
+from stripe_routes import *
 from trust_algorithm import TrustScoringEngine
 from document_signing import DocumentSigning
 from admin_dashboard import admin_bp
@@ -83,6 +83,9 @@ class User(db.Model):
     is_verified = db.Column(db.Boolean, default=False)
     investments_completed = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    subscription_plan = db.Column(db.String(50), nullable=True)
+    subscription_expiry = db.Column(db.DateTime, nullable=True)
+    stripe_customer_id = db.Column(db.String(200), nullable=True)
 
 class Deal(db.Model):
     id = db.Column(db.Integer, primary_key=True)
