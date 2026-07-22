@@ -1,19 +1,19 @@
 import os
 import stripe
 from flask import request, jsonify
-from app import app, db, User
 from datetime import datetime, timedelta
+# ✅ Import from app.py
+from app import app, db, User, token_required
 
-# ✅ Replace it with this
+# Initialize Stripe with your secret key from environment
 stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
 
-# ✅ YOUR PRICE IDs - Save them here!
+# Your Price IDs
 PRICE_IDS = {
-    'monthly': 'price_1Tvq829OUuvX0WP5OaHexOvw',    # Monthly Subscription
-    'yearly': 'price_1Tvq8t9OUuvX0WP5Fa3DJEQL',    # Yearly subscription
+    'monthly': 'price_1Tvq829OUuvX0WP5OaHexOvw',
+    'yearly': 'price_1Tvq8t9OUuvX0WP5Fa3DJEQL',
 }
 
-# Plan details (for displaying prices)
 SUBSCRIPTION_PLANS = {
     'monthly': {
         'id': 'monthly',
@@ -57,7 +57,7 @@ def create_payment_intent(current_user):
         
         # Create a Payment Intent for the subscription
         payment_intent = stripe.PaymentIntent.create(
-            amount=int(SUBSCRIPTION_PLANS[plan_id]['price'] * 100),  # Amount in cents
+            amount=int(SUBSCRIPTION_PLANS[plan_id]['price'] * 100),
             currency='usd',
             customer=current_user.stripe_customer_id,
             metadata={
@@ -84,7 +84,6 @@ def activate_subscription(current_user):
         data = request.json
         plan_id = data.get('planId')
         
-        # Set subscription expiry
         if plan_id == 'monthly':
             expiry = datetime.utcnow() + timedelta(days=30)
         elif plan_id == 'yearly':

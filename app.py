@@ -12,7 +12,6 @@ import datetime
 from functools import wraps
 import os
 from dotenv import load_dotenv
-from stripe_routes import *
 from trust_algorithm import TrustScoringEngine
 from document_signing import DocumentSigning
 from admin_dashboard import admin_bp
@@ -875,6 +874,8 @@ def debug_db(current_user):
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+from stripe_routes import *
 
 # --- WebSocket for Real-Time Chat ---
 @socketio.on('join_deal_chat')
