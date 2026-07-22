@@ -8,23 +8,26 @@ from flask_cors import CORS
 import sys
 from flask_socketio import SocketIO, join_room, emit
 import jwt
-import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 import os
 from dotenv import load_dotenv
 from trust_algorithm import TrustScoringEngine
 from document_signing import DocumentSigning
-from admin_dashboard import admin_bp
 import json
 import hashlib
 
 load_dotenv()
 
+# 1. Create app first
 app = Flask(__name__)
+
+# 2. Configure app
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-change-me')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///invest.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# 3. Initialize extensions
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
@@ -35,6 +38,10 @@ CORS(app, origins=["http://localhost:3000", "http://localhost:5000"])
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # ❌ REMOVED the duplicate CORS(app) call that was here
+
+# 4. Import and register blueprints AFTER app is created
+from admin_dashboard import admin_bp
+app.register_blueprint(admin_bp, url_prefix='/admin')
 
 # Error handlers
 @app.errorhandler(404)
@@ -67,7 +74,7 @@ def home():
 def health_check():
     return jsonify({
         'status': 'healthy',
-        'timestamp': datetime.datetime.utcnow().isoformat(),
+        'timestamp': datetime.utcnow().isoformat(),
         'database': 'connected' if db.session.is_active else 'disconnected'
     })
 
@@ -81,7 +88,7 @@ class User(db.Model):
     trust_score = db.Column(db.Float, default=50.0)
     is_verified = db.Column(db.Boolean, default=False)
     investments_completed = db.Column(db.Integer, default=0)
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     subscription_plan = db.Column(db.String(50), nullable=True)
     subscription_expiry = db.Column(db.DateTime, nullable=True)
     stripe_customer_id = db.Column(db.String(200), nullable=True)
@@ -97,7 +104,7 @@ class Deal(db.Model):
     expected_roi = db.Column(db.String(50))
     status = db.Column(db.String(50), default='open')  # open, due_diligence, funding, closed
     sponsor_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     sponsor = db.relationship('User', backref='deals_listed')
 
 class DealInterest(db.Model):
@@ -105,7 +112,7 @@ class DealInterest(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     deal_id = db.Column(db.Integer, db.ForeignKey('deal.id'))
     status = db.Column(db.String(50), default='pending')  # pending, accepted, declined
-    joined_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
     user = db.relationship('User', backref='interests')
     deal = db.relationship('Deal', backref='interested_users')
 
@@ -116,7 +123,7 @@ class TrustReview(db.Model):
     deal_id = db.Column(db.Integer, db.ForeignKey('deal.id'))
     rating = db.Column(db.Integer, nullable=False)  # 1-5
     comment = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 # --- New Models for Investment Tracking ---
 
@@ -128,7 +135,7 @@ class InvestmentGroup(db.Model):
     total_committed = db.Column(db.Float, default=0.0)
     target_amount = db.Column(db.Float)  # Total needed for the deal
     status = db.Column(db.String(50), default='forming')  # forming, committed, funded, closed
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     deal = db.relationship('Deal', backref='investment_groups')
 
 class InvestmentCommitment(db.Model):
@@ -141,7 +148,7 @@ class InvestmentCommitment(db.Model):
     status = db.Column(db.String(50), default='pending')  # pending, confirmed, withdrawn
     proof_of_funds = db.Column(db.String(500))  # URL to uploaded proof (bank statement, etc.)
     confirmed_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     investor = db.relationship('User', backref='commitments')
     group = db.relationship('InvestmentGroup', backref='commitments')
 
@@ -154,7 +161,7 @@ class InvestmentMilestone(db.Model):
     due_date = db.Column(db.DateTime)
     completed = db.Column(db.Boolean, default=False)
     completed_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     group = db.relationship('InvestmentGroup', backref='milestones')
 
 def calculate_trust_score(user):
@@ -224,7 +231,7 @@ def index():
 def health():
     return jsonify({
         'status': 'healthy',
-        'timestamp': datetime.datetime.utcnow().isoformat()
+        'timestamp': datetime.utcnow().isoformat()
     })
 
 @app.route('/api/register', methods=['POST'])
@@ -299,7 +306,7 @@ def login():
         # ✅ FIX: Generate token before using it
         token = jwt.encode({
             'user_id': user.id,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+            'exp': datetime.utcnow() + timedelta(hours=24)
         }, app.config['SECRET_KEY'], algorithm='HS256')
         
         # ✅ FIX: Create user_data before using it
@@ -535,7 +542,7 @@ def confirm_funds(current_user, group_id):
     data = request.json
     commitment.amount_confirmed = data.get('confirmed_amount', commitment.amount_committed)
     commitment.status = 'confirmed'
-    commitment.confirmed_at = datetime.datetime.utcnow()
+    commitment.confirmed_at = datetime.utcnow()
     
     # Store proof of funds reference (URL, document ID, etc.)
     if data.get('proof_url'):
@@ -570,7 +577,7 @@ def add_milestone(current_user, group_id):
         group_id=group_id,
         title=data['title'],
         description=data.get('description', ''),
-        due_date=datetime.datetime.fromisoformat(data['due_date']) if data.get('due_date') else None
+        due_date=datetime.fromisoformat(data['due_date']) if data.get('due_date') else None
     )
     db.session.add(milestone)
     db.session.commit()
@@ -596,7 +603,7 @@ def complete_milestone(current_user, group_id, milestone_id):
             return jsonify({'message': 'Only sponsor or confirmed investors can complete milestones'}), 403
     
     milestone.completed = True
-    milestone.completed_at = datetime.datetime.utcnow()
+    milestone.completed_at = datetime.utcnow()
     db.session.commit()
     
     socketio.emit('milestone_completed', {
@@ -676,7 +683,7 @@ def report_user(current_user, user_id):
                 'reporter': current_user.id,
                 'reported': user_id,
                 'reason': data.get('reason', 'Suspicious behavior'),
-                'created': datetime.datetime.utcnow()
+                'created': datetime.utcnow()
             }
         )
         db.session.commit()
@@ -719,7 +726,7 @@ def create_document(current_user):
     data = request.json
     
     # Generate document ID
-    doc_id = hashlib.md5(f"{current_user.id}{datetime.datetime.utcnow().isoformat()}".encode()).hexdigest()
+    doc_id = hashlib.md5(f"{current_user.id}{datetime.utcnow().isoformat()}".encode()).hexdigest()
     
     doc = {
         'id': doc_id,
@@ -727,7 +734,7 @@ def create_document(current_user):
         'content': data['content'],
         'template_type': data.get('template_type', 'investment_agreement'),
         'created_by': current_user.id,
-        'created_at': datetime.datetime.utcnow().isoformat(),
+        'created_at': datetime.utcnow().isoformat(),
         'status': 'draft',
         'signatures': []
     }
@@ -745,7 +752,7 @@ def create_document(current_user):
                 'title': doc['title'],
                 'content': json.dumps(doc),
                 'status': 'draft',
-                'created': datetime.datetime.utcnow()
+                'created': datetime.utcnow()
             }
         )
         db.session.commit()
@@ -779,7 +786,7 @@ def sign_document(current_user, doc_id):
             return jsonify({'message': 'Already signed'}), 400
         
         # Generate signature
-        timestamp = datetime.datetime.utcnow().isoformat()
+        timestamp = datetime.utcnow().isoformat()
         signature_hash = hashlib.sha256(
             f"{doc_id}{current_user.id}{timestamp}".encode()
         ).hexdigest()
@@ -889,26 +896,10 @@ def handle_deal_chat_message(data):
     emit('message', {
         'user': data['username'],
         'message': data['message'],
-        'timestamp': datetime.datetime.utcnow().isoformat()
+        'timestamp': datetime.utcnow().isoformat()
     }, room=f"deal_{data['deal_id']}")
 
-# Register admin blueprint with a unique name
-try:
-    app.register_blueprint(admin_bp, url_prefix='/admin')
-except ValueError as e:
-    print(f"⚠️ Admin blueprint already registered: {e}")
-    # If already registered, try with a different name
-    try:
-        from admin_dashboard import admin_bp as admin_bp_alt
-        app.register_blueprint(admin_bp_alt, url_prefix='/admin', name='admin_alt')
-    except:
-        print("⚠️ Could not register admin blueprint")
-
-# --- Run ---
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    
     # Get port from environment variable
     port = int(os.environ.get('PORT', 5000))
     
