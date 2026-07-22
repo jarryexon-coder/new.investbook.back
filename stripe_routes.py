@@ -33,42 +33,85 @@ SUBSCRIPTION_PLANS = {
 @app.route('/api/subscriptions/create-payment-intent', methods=['POST'])
 @token_required
 def create_payment_intent(current_user):
+    """Create a Stripe Payment Intent for subscription"""
     try:
+        # ✅ Check if Stripe API key is configured
+        if not stripe.api_key or stripe.api_key == 'sk_test_...':
+            print("❌ Stripe API key is not configured!")
+            return jsonify({
+                'error': 'Stripe is not configured',
+                'message': 'Please set STRIPE_SECRET_KEY environment variable'
+            }), 500
+
         data = request.json
         plan_id = data.get('planId')
+        print(f"🔍 Creating payment intent for user: {current_user.username}, plan: {plan_id}")
         
         if plan_id not in PRICE_IDS:
             return jsonify({'error': 'Invalid plan'}), 400
         
+        # Create a customer if one doesn't exist
         if not current_user.stripe_customer_id:
-            customer = stripe.Customer.create(
-                email=current_user.email,
-                name=current_user.username,
-                metadata={'user_id': current_user.id}
+            try:
+                customer = stripe.Customer.create(
+                    email=current_user.email,
+                    name=current_user.username,
+                    metadata={'user_id': current_user.id}
+                )
+                current_user.stripe_customer_id = customer.id
+                db.session.commit()
+                print(f"✅ Created Stripe customer: {customer.id}")
+            except Exception as e:
+                print(f"❌ Failed to create customer: {str(e)}")
+                return jsonify({'error': 'Failed to create customer: ' + str(e)}), 500
+        
+        # Create a Payment Intent
+        try:
+            amount = int(SUBSCRIPTION_PLANS[plan_id]['price'] * 100)
+            payment_intent = stripe.PaymentIntent.create(
+                amount=amount,
+                currency='usd',
+                customer=current_user.stripe_customer_id,
+                metadata={
+                    'user_id': current_user.id,
+                    'plan_id': plan_id,
+                    'username': current_user.username
+                },
+                description=f"{SUBSCRIPTION_PLANS[plan_id]['name']} Subscription",
+                payment_method_types=['card'],
+                setup_future_usage='off_session',
             )
-            current_user.stripe_customer_id = customer.id
-            db.session.commit()
-        
-        payment_intent = stripe.PaymentIntent.create(
-            amount=int(SUBSCRIPTION_PLANS[plan_id]['price'] * 100),
-            currency='usd',
-            customer=current_user.stripe_customer_id,
-            metadata={
-                'user_id': current_user.id,
-                'plan_id': plan_id
-            },
-            description=f"{SUBSCRIPTION_PLANS[plan_id]['name']} Subscription",
-            payment_method_types=['card'],
-            setup_future_usage='off_session',
-        )
-        
-        return jsonify({
-            'clientSecret': payment_intent.client_secret,
-            'paymentIntentId': payment_intent.id
-        }), 200
+            
+            print(f"✅ Payment intent created: {payment_intent.id}")
+            
+            return jsonify({
+                'clientSecret': payment_intent.client_secret,
+                'paymentIntentId': payment_intent.id
+            }), 200
+            
+        except stripe.error.AuthenticationError as e:
+            print(f"❌ Stripe Authentication Error: {str(e)}")
+            return jsonify({
+                'error': 'Stripe authentication failed',
+                'message': 'Please check your Stripe API key'
+            }), 500
+        except stripe.error.InvalidRequestError as e:
+            print(f"❌ Stripe Invalid Request: {str(e)}")
+            return jsonify({
+                'error': 'Invalid request to Stripe',
+                'message': str(e)
+            }), 400
+        except Exception as e:
+            print(f"❌ Stripe Error: {str(e)}")
+            return jsonify({
+                'error': 'Failed to create payment intent',
+                'message': str(e)
+            }), 500
         
     except Exception as e:
-        print(f"Payment intent error: {str(e)}")
+        print(f"❌ Payment intent error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/subscriptions/activate', methods=['POST'])
@@ -77,6 +120,7 @@ def activate_subscription(current_user):
     try:
         data = request.json
         plan_id = data.get('planId')
+        print(f"🔍 Activating subscription for user: {current_user.username}, plan: {plan_id}")
         
         if plan_id == 'monthly':
             expiry = datetime.utcnow() + timedelta(days=30)
@@ -89,6 +133,8 @@ def activate_subscription(current_user):
         current_user.subscription_expiry = expiry
         db.session.commit()
         
+        print(f"✅ Subscription activated for user: {current_user.username}")
+        
         return jsonify({
             'success': True,
             'message': 'Subscription activated',
@@ -96,18 +142,15 @@ def activate_subscription(current_user):
         }), 200
         
     except Exception as e:
-        print(f"Activation error: {str(e)}")
+        print(f"❌ Activation error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/subscriptions/cancel', methods=['POST'])
 @token_required
 def cancel_subscription(current_user):
-    """Cancel subscription"""
     try:
         print(f"🔍 Canceling subscription for user: {current_user.username}")
-        print(f"📦 Current subscription plan: {current_user.subscription_plan}")
         
-        # Clear subscription in database
         current_user.subscription_plan = None
         current_user.subscription_expiry = None
         db.session.commit()
@@ -121,18 +164,11 @@ def cancel_subscription(current_user):
         
     except Exception as e:
         print(f"❌ Cancel error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'message': 'Failed to cancel subscription'
-        }), 500
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/subscriptions/status', methods=['GET'])
 @token_required
 def get_subscription_status(current_user):
-    """Get user's subscription status"""
     try:
         is_active = False
         expiry = None
