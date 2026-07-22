@@ -892,8 +892,17 @@ def handle_deal_chat_message(data):
         'timestamp': datetime.datetime.utcnow().isoformat()
     }, room=f"deal_{data['deal_id']}")
 
-# Register admin blueprint
-app.register_blueprint(admin_bp)
+# Register admin blueprint with a unique name
+try:
+    app.register_blueprint(admin_bp, url_prefix='/admin')
+except ValueError as e:
+    print(f"⚠️ Admin blueprint already registered: {e}")
+    # If already registered, try with a different name
+    try:
+        from admin_dashboard import admin_bp as admin_bp_alt
+        app.register_blueprint(admin_bp_alt, url_prefix='/admin', name='admin_alt')
+    except:
+        print("⚠️ Could not register admin blueprint")
 
 # --- Run ---
 if __name__ == '__main__':
