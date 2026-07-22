@@ -31,6 +31,11 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
+# ✅ Create tables if they don't exist
+with app.app_context():
+    db.create_all()
+    print("✅ Database tables created/verified")
+
 # ✅ Simple CORS - Allow all
 CORS(app, origins=["http://localhost:3000", "http://localhost:5000"])
 
