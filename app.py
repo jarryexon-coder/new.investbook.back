@@ -1,5 +1,5 @@
 # requirements.txt
-# flask, flask-sqlalchemy, flask-bcrypt, flask-cors, flask-socketio, eventlet, pyjwt, python-dotenv
+# flask, flask-sqlalchemy, flask-bcrypt, flask-cors, flask-socketio, eventlet, pyjwt, python-dotenv, flask-caching
 
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
@@ -16,6 +16,7 @@ from trust_algorithm import TrustScoringEngine
 from document_signing import DocumentSigning
 import json
 import hashlib
+from flask_caching import Cache
 
 load_dotenv()
 
@@ -27,9 +28,14 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-change-me')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///invest.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# ✅ Add caching configuration
+app.config['CACHE_TYPE'] = 'SimpleCache'
+app.config['CACHE_DEFAULT_TIMEOUT'] = 1800  # 30 minutes cache
+
 # 3. Initialize extensions
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
+cache = Cache(app)  # Initialize cache
 
 # ✅ Simple CORS - Allow all
 CORS(app, origins=["http://localhost:3000", "http://localhost:5000", "https://investbook-production.up.railway.app"])
@@ -313,7 +319,51 @@ def login():
         print(f"Login error: {str(e)}")
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
+@app.route('/api/refresh-listings', methods=['POST'])
+def refresh_listings():
+    """Endpoint for Apify webhook to notify when data is refreshed"""
+    try:
+        data = request.json
+        print(f"📩 Webhook received at {datetime.utcnow().isoformat()}")
+        print(f"📦 Data: {data}")
+        
+        # Extract run information
+        run_id = data.get('runId', 'unknown')
+        dataset_id = data.get('datasetId', 'unknown')
+        item_count = data.get('itemCount', 0)
+        status = data.get('status', 'unknown')
+        
+        print(f"✅ Run {run_id} completed with status: {status}")
+        print(f"📊 Items collected: {item_count}")
+        
+        # Clear the cache so new data will be fetched
+        cache.delete('all_business_listings')
+        cache.delete('all_deals')
+        print("🗑️ Cache cleared")
+        
+        # Optional: Store the latest run info
+        cache.set('last_apify_run', {
+            'runId': run_id,
+            'datasetId': dataset_id,
+            'itemCount': item_count,
+            'status': status,
+            'timestamp': datetime.utcnow().isoformat()
+        }, timeout=86400)  # Store for 24 hours
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Cache cleared, new data will be fetched',
+            'run_id': run_id,
+            'dataset_id': dataset_id,
+            'item_count': item_count
+        }), 200
+    except Exception as e:
+        print(f"❌ Webhook error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+# ✅ Cached deals endpoint
 @app.route('/api/deals', methods=['GET'])
+@cache.cached(timeout=1800, key_prefix='all_deals')
 def get_deals():
     deals = Deal.query.filter_by(status='open').all()
     return jsonify([{
@@ -347,6 +397,9 @@ def create_deal(current_user):
         
         db.session.add(deal)
         db.session.commit()
+        
+        # Clear the cache for deals
+        cache.delete('all_deals')
         
         return jsonify({
             'message': 'Deal created successfully',
