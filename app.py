@@ -323,32 +323,36 @@ def login():
 def refresh_listings():
     """Endpoint for Apify webhook to notify when data is refreshed"""
     try:
-        data = request.json
+        data = request.get_json()
         print(f"📩 Webhook received at {datetime.utcnow().isoformat()}")
         print(f"📦 Data: {data}")
         
-        # Extract run information
+        # Extract run information - handle both field names
         run_id = data.get('runId', 'unknown')
         dataset_id = data.get('datasetId', 'unknown')
-        item_count = data.get('itemCount', 0)
         status = data.get('status', 'unknown')
+        
+        # Try both field names for item count
+        item_count = data.get('itemCount')
+        if item_count is None:
+            item_count = data.get('totalItems', 0)
         
         print(f"✅ Run {run_id} completed with status: {status}")
         print(f"📊 Items collected: {item_count}")
         
-        # Clear the cache so new data will be fetched
+        # Clear the cache
         cache.delete('all_business_listings')
         cache.delete('all_deals')
-        print("🗑️ Cache cleared")
+        print("🗑️ Cache cleared for all_business_listings and all_deals")
         
-        # Optional: Store the latest run info
+        # Store the latest run info
         cache.set('last_apify_run', {
             'runId': run_id,
             'datasetId': dataset_id,
             'itemCount': item_count,
             'status': status,
             'timestamp': datetime.utcnow().isoformat()
-        }, timeout=86400)  # Store for 24 hours
+        }, timeout=86400)
         
         return jsonify({
             'status': 'success',
@@ -359,6 +363,8 @@ def refresh_listings():
         }), 200
     except Exception as e:
         print(f"❌ Webhook error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # ✅ Cached deals endpoint
