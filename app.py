@@ -34,8 +34,7 @@ bcrypt = Bcrypt(app)
 # ✅ Simple CORS - Allow all
 CORS(app, origins=["http://localhost:3000", "http://localhost:5000", "https://investbook-production.up.railway.app"])
 
-# ✅ KEEP THIS - For SocketIO (real-time features)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # ✅ Create tables on startup
 with app.app_context():
@@ -168,6 +167,18 @@ def calculate_trust_score(user):
     deal_score = min(user.investments_completed / 10, 1) * 30
     verif_score = 10 if user.is_verified else 0
     return review_score + deal_score + verif_score
+
+# --- Chat Models ---
+class ChatMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    deal_id = db.Column(db.Integer, db.ForeignKey('deal.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    message = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    read = db.Column(db.Boolean, default=False)
+    
+    user = db.relationship('User', backref='chat_messages')
+    deal = db.relationship('Deal', backref='chat_messages')
 
 # --- Authentication ---
 def token_required(f):
@@ -358,6 +369,124 @@ def create_deal(current_user):
         print(f"Error creating deal: {str(e)}")
         return jsonify({'error': str(e), 'message': 'Failed to create deal'}), 500
 
+
+# --- Chat Routes ---
+@app.route('/api/deals/<int:deal_id>/messages', methods=['GET'])
+@token_required
+def get_chat_messages(current_user, deal_id):
+    """Get all messages for a deal"""
+    try:
+        # Check if user has access to this deal
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        # Check if user is the sponsor or has expressed interest
+        if deal.sponsor_id != current_user.id:
+            interest = DealInterest.query.filter_by(
+                deal_id=deal_id, 
+                user_id=current_user.id
+            ).first()
+            if not interest:
+                return jsonify({'error': 'Access denied'}), 403
+        
+        messages = ChatMessage.query.filter_by(deal_id=deal_id).order_by(ChatMessage.created_at.asc()).all()
+        
+        return jsonify([{
+            'id': m.id,
+            'user_id': m.user_id,
+            'username': m.user.username,
+            'message': m.message,
+            'created_at': m.created_at.isoformat(),
+            'read': m.read
+        } for m in messages]), 200
+    except Exception as e:
+        print(f"Error getting messages: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/messages', methods=['POST'])
+@token_required
+def send_chat_message(current_user, deal_id):
+    """Send a message to a deal chat"""
+    try:
+        data = request.json
+        message_text = data.get('message')
+        
+        if not message_text:
+            return jsonify({'error': 'Message is required'}), 400
+        
+        # Check if user has access to this deal
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        # Check if user is the sponsor or has expressed interest
+        if deal.sponsor_id != current_user.id:
+            interest = DealInterest.query.filter_by(
+                deal_id=deal_id, 
+                user_id=current_user.id
+            ).first()
+            if not interest:
+                return jsonify({'error': 'Access denied'}), 403
+        
+        # Save message
+        message = ChatMessage(
+            deal_id=deal_id,
+            user_id=current_user.id,
+            message=message_text
+        )
+        db.session.add(message)
+        db.session.commit()
+        
+        # Emit via WebSocket
+        socketio.emit('new_message', {
+            'deal_id': deal_id,
+            'message': {
+                'id': message.id,
+                'user_id': message.user_id,
+                'username': current_user.username,
+                'message': message.message,
+                'created_at': message.created_at.isoformat(),
+                'read': message.read
+            }
+        }, room=f'deal_{deal_id}')
+        
+        return jsonify({
+            'id': message.id,
+            'user_id': message.user_id,
+            'username': current_user.username,
+            'message': message.message,
+            'created_at': message.created_at.isoformat(),
+            'read': message.read
+        }), 201
+    except Exception as e:
+        print(f"Error sending message: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/messages/<int:message_id>/read', methods=['PUT'])
+@token_required
+def mark_message_read(current_user, deal_id, message_id):
+    """Mark a message as read"""
+    try:
+        message = ChatMessage.query.get(message_id)
+        if not message:
+            return jsonify({'error': 'Message not found'}), 404
+        
+        if message.deal_id != deal_id:
+            return jsonify({'error': 'Message does not belong to this deal'}), 400
+        
+        # Only the recipient can mark as read
+        if message.user_id == current_user.id:
+            return jsonify({'error': 'Cannot mark own message as read'}), 400
+        
+        message.read = True
+        db.session.commit()
+        
+        return jsonify({'message': 'Message marked as read'}), 200
+    except Exception as e:
+        print(f"Error marking message read: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 # Import Stripe routes
 from stripe_routes import *
 
@@ -375,6 +504,34 @@ def handle_deal_chat_message(data):
         'message': data['message'],
         'timestamp': datetime.utcnow().isoformat()
     }, room=f"deal_{data['deal_id']}")
+
+# Add these to the existing WebSocket handlers
+@socketio.on('join_deal_chat')
+def handle_join_deal_chat(data):
+    deal_id = data.get('deal_id')
+    if deal_id:
+        join_room(f'deal_{deal_id}')
+        emit('message', {'system': f"User joined deal {deal_id} chat"}, room=f'deal_{deal_id}')
+
+@socketio.on('leave_deal_chat')
+def handle_leave_deal_chat(data):
+    deal_id = data.get('deal_id')
+    if deal_id:
+        leave_room(f'deal_{deal_id}')
+        emit('message', {'system': "User left chat"}, room=f'deal_{deal_id}')
+
+@socketio.on('deal_chat_message')
+def handle_deal_chat_message(data):
+    deal_id = data.get('deal_id')
+    message = data.get('message')
+    username = data.get('username', 'Anonymous')
+    
+    if deal_id and message:
+        emit('message', {
+            'user': username,
+            'message': message,
+            'timestamp': datetime.utcnow().isoformat()
+        }, room=f"deal_{deal_id}")
 
 if __name__ == '__main__':
     # ✅ Create tables if they don't exist
