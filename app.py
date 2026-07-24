@@ -398,15 +398,21 @@ def load_cached_data():
     """Manually load data into cache"""
     try:
         data = request.json
-        if not data or 'businesses' not in data:
-            return jsonify({'error': 'Missing businesses data'}), 400
+        if not data:
+            return jsonify({'error': 'Missing data'}), 400
         
-        cache.set('all_business_listings', data['businesses'], timeout=86400)  # 24 hours
-        print(f"✅ Manually loaded {len(data['businesses'])} businesses into cache")
+        businesses = data if isinstance(data, list) else data.get('businesses', [])
+        
+        if not businesses:
+            return jsonify({'error': 'No businesses found in data'}), 400
+        
+        cache.set('all_business_listings', businesses, timeout=86400)
+        print(f"✅ Manually loaded {len(businesses)} businesses into cache")
         
         return jsonify({
             'status': 'success',
-            'message': f'Loaded {len(data["businesses"])} businesses into cache'
+            'message': f'Loaded {len(businesses)} businesses into cache',
+            'count': len(businesses)
         }), 200
     except Exception as e:
         print(f"❌ Error loading cache: {str(e)}")
