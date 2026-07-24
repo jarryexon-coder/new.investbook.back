@@ -367,6 +367,51 @@ def refresh_listings():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+# --- Cache endpoints ---
+@app.route('/api/cache-status', methods=['GET'])
+def cache_status():
+    """Check cache status"""
+    last_run = cache.get('last_apify_run')
+    return jsonify({
+        'last_apify_run': last_run,
+        'cache_health': 'healthy',
+        'cache_keys': ['all_deals', 'all_business_listings', 'last_apify_run']
+    })
+
+@app.route('/api/cache/businesses', methods=['GET'])
+def get_cached_businesses():
+    """Get cached business listings"""
+    data = cache.get('all_business_listings')
+    if data:
+        return jsonify({
+            'status': 'success',
+            'count': len(data),
+            'data': data
+        })
+    return jsonify({
+        'status': 'empty',
+        'message': 'No cached data found'
+    }), 404
+
+@app.route('/api/cache/load', methods=['POST'])
+def load_cached_data():
+    """Manually load data into cache"""
+    try:
+        data = request.json
+        if not data or 'businesses' not in data:
+            return jsonify({'error': 'Missing businesses data'}), 400
+        
+        cache.set('all_business_listings', data['businesses'], timeout=86400)  # 24 hours
+        print(f"✅ Manually loaded {len(data['businesses'])} businesses into cache")
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Loaded {len(data["businesses"])} businesses into cache'
+        }), 200
+    except Exception as e:
+        print(f"❌ Error loading cache: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 # ✅ Cached deals endpoint
 @app.route('/api/deals', methods=['GET'])
 @cache.cached(timeout=1800, key_prefix='all_deals')
