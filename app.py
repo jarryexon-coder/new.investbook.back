@@ -479,7 +479,6 @@ def create_deal(current_user):
         print(f"Error creating deal: {str(e)}")
         return jsonify({'error': str(e), 'message': 'Failed to create deal'}), 500
 
-
 # --- Chat Routes ---
 @app.route('/api/deals/<int:deal_id>/messages', methods=['GET'])
 @token_required
@@ -490,18 +489,18 @@ def get_chat_messages(current_user, deal_id):
         deal = Deal.query.get(deal_id)
         if not deal:
             return jsonify({'error': 'Deal not found'}), 404
-        
+
         # Check if user is the sponsor or has expressed interest
         if deal.sponsor_id != current_user.id:
             interest = DealInterest.query.filter_by(
-                deal_id=deal_id, 
+                deal_id=deal_id,
                 user_id=current_user.id
             ).first()
             if not interest:
                 return jsonify({'error': 'Access denied'}), 403
-        
+
         messages = ChatMessage.query.filter_by(deal_id=deal_id).order_by(ChatMessage.created_at.asc()).all()
-        
+
         return jsonify([{
             'id': m.id,
             'user_id': m.user_id,
@@ -514,6 +513,97 @@ def get_chat_messages(current_user, deal_id):
         print(f"Error getting messages: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/deals/<int:deal_id>/messages', methods=['POST'])
+@token_required
+def send_chat_message(current_user, deal_id):
+    """Send a message to a deal chat"""
+    try:
+        data = request.json
+        message_text = data.get('message')
+        
+        if not message_text:
+            return jsonify({'error': 'Message is required'}), 400
+        
+        # Check if deal exists
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            print(f"❌ Deal not found: {deal_id}")
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        # Check if user has access to this deal
+        if deal.sponsor_id != current_user.id:
+            interest = DealInterest.query.filter_by(
+                deal_id=deal_id, 
+                user_id=current_user.id
+            ).first()
+            if not interest:
+                return jsonify({'error': 'Access denied'}), 403
+        
+        # Save message
+        message = ChatMessage(
+            deal_id=deal_id,
+            user_id=current_user.id,
+            message=message_text
+        )
+        db.session.add(message)
+        db.session.commit()
+        
+        print(f"✅ Message saved for deal {deal_id}")
+        
+        # Emit via WebSocket
+        socketio.emit('new_message', {
+            'deal_id': deal_id,
+            'message': {
+                'id': message.id,
+                'user_id': message.user_id,
+                'username': current_user.username,
+                'message': message.message,
+                'created_at': message.created_at.isoformat(),
+                'read': message.read
+            }
+        }, room=f'deal_{deal_id}')
+        
+        return jsonify({
+            'id': message.id,
+            'user_id': message.user_id,
+            'username': current_user.username,
+            'message': message.message,
+            'created_at': message.created_at.isoformat(),
+            'read': message.read
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error sending message: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/deals/<int:deal_id>/messages/<int:message_id>/read', methods=['PUT'])
+@token_required
+def mark_message_read(current_user, deal_id, message_id):
+    """Mark a message as read"""
+    try:
+        message = ChatMessage.query.get(message_id)
+        if not message:
+            return jsonify({'error': 'Message not found'}), 404
+        
+        if message.deal_id != deal_id:
+            return jsonify({'error': 'Message does not belong to this deal'}), 400
+        
+        # Only the recipient can mark as read
+        if message.user_id == current_user.id:
+            return jsonify({'error': 'Cannot mark own message as read'}), 400
+        
+        message.read = True
+        db.session.commit()
+        
+        return jsonify({'message': 'Message marked as read'}), 200
+    except Exception as e:
+        print(f"Error marking message read: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# --- Create or get a deal from cached data ---
 @app.route('/api/deals/sync', methods=['POST'])
 @token_required
 def sync_deal(current_user):
@@ -529,29 +619,21 @@ def sync_deal(current_user):
         if not deal_id:
             return jsonify({'error': 'Deal ID is required'}), 400
         
-        # Check if deal exists by ID (if numeric) or by title
+        # Try to find existing deal by title first
+        title = deal_data.get('title', '')
         existing_deal = None
-        try:
-            # Try to find by ID if it's numeric
-            if str(deal_id).isdigit():
-                existing_deal = Deal.query.get(int(deal_id))
-        except:
-            pass
         
-        # If not found by ID, try to find by title
-        if not existing_deal:
-            title = deal_data.get('title', '')
-            if title:
-                existing_deal = Deal.query.filter_by(title=title).first()
+        if title:
+            existing_deal = Deal.query.filter_by(title=title).first()
         
         if not existing_deal:
-            # Create a new deal from cached data
+            # Create a new deal
             price = deal_data.get('price', 0)
             if isinstance(price, str):
                 price = float(''.join(filter(str.isdigit, price))) if price else 0
             
             deal = Deal(
-                title=deal_data.get('title', 'Property Listing')[:200],
+                title=title[:200] if title else f'Property {deal_id}',
                 description=deal_data.get('description', '')[:500],
                 asset_type=deal_data.get('propertyType', 'Commercial') or 'Commercial',
                 total_price=float(price) if price else 0,
@@ -581,88 +663,6 @@ def sync_deal(current_user):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/deals/<int:deal_id>/messages', methods=['POST'])
-@token_required
-def send_chat_message(current_user, deal_id):
-    """Send a message to a deal chat"""
-    try:
-        data = request.json
-        message_text = data.get('message')
-        
-        if not message_text:
-            return jsonify({'error': 'Message is required'}), 400
-        
-        # Check if user has access to this deal
-        deal = Deal.query.get(deal_id)
-        if not deal:
-            return jsonify({'error': 'Deal not found'}), 404
-        
-        # Check if user is the sponsor or has expressed interest
-        if deal.sponsor_id != current_user.id:
-            interest = DealInterest.query.filter_by(
-                deal_id=deal_id, 
-                user_id=current_user.id
-            ).first()
-            if not interest:
-                return jsonify({'error': 'Access denied'}), 403
-        
-        # Save message
-        message = ChatMessage(
-            deal_id=deal_id,
-            user_id=current_user.id,
-            message=message_text
-        )
-        db.session.add(message)
-        db.session.commit()
-        
-        # Emit via WebSocket
-        socketio.emit('new_message', {
-            'deal_id': deal_id,
-            'message': {
-                'id': message.id,
-                'user_id': message.user_id,
-                'username': current_user.username,
-                'message': message.message,
-                'created_at': message.created_at.isoformat(),
-                'read': message.read
-            }
-        }, room=f'deal_{deal_id}')
-        
-        return jsonify({
-            'id': message.id,
-            'user_id': message.user_id,
-            'username': current_user.username,
-            'message': message.message,
-            'created_at': message.created_at.isoformat(),
-            'read': message.read
-        }), 201
-    except Exception as e:
-        print(f"Error sending message: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/deals/<int:deal_id>/messages/<int:message_id>/read', methods=['PUT'])
-@token_required
-def mark_message_read(current_user, deal_id, message_id):
-    """Mark a message as read"""
-    try:
-        message = ChatMessage.query.get(message_id)
-        if not message:
-            return jsonify({'error': 'Message not found'}), 404
-        
-        if message.deal_id != deal_id:
-            return jsonify({'error': 'Message does not belong to this deal'}), 400
-        
-        # Only the recipient can mark as read
-        if message.user_id == current_user.id:
-            return jsonify({'error': 'Cannot mark own message as read'}), 400
-        
-        message.read = True
-        db.session.commit()
-        
-        return jsonify({'message': 'Message marked as read'}), 200
-    except Exception as e:
-        print(f"Error marking message read: {str(e)}")
-        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/debug/token', methods=['GET'])
 @token_required
