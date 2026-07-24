@@ -508,6 +508,73 @@ def get_chat_messages(current_user, deal_id):
         print(f"Error getting messages: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/deals/sync', methods=['POST'])
+@token_required
+def sync_deal(current_user):
+    """Create or update a deal from cached data"""
+    try:
+        data = request.get_json()
+        deal_id = data.get('dealId')
+        deal_data = data.get('dealData', {})
+        
+        print(f"🔄 Syncing deal: {deal_id}")
+        print(f"📦 Deal data: {deal_data}")
+        
+        if not deal_id:
+            return jsonify({'error': 'Deal ID is required'}), 400
+        
+        # Check if deal exists by ID (if numeric) or by title
+        existing_deal = None
+        try:
+            # Try to find by ID if it's numeric
+            if str(deal_id).isdigit():
+                existing_deal = Deal.query.get(int(deal_id))
+        except:
+            pass
+        
+        # If not found by ID, try to find by title
+        if not existing_deal:
+            title = deal_data.get('title', '')
+            if title:
+                existing_deal = Deal.query.filter_by(title=title).first()
+        
+        if not existing_deal:
+            # Create a new deal from cached data
+            price = deal_data.get('price', 0)
+            if isinstance(price, str):
+                price = float(''.join(filter(str.isdigit, price))) if price else 0
+            
+            deal = Deal(
+                title=deal_data.get('title', 'Property Listing')[:200],
+                description=deal_data.get('description', '')[:500],
+                asset_type=deal_data.get('propertyType', 'Commercial') or 'Commercial',
+                total_price=float(price) if price else 0,
+                min_investment=float(price) / 2 if price else 0,
+                location=deal_data.get('location', '')[:200],
+                expected_roi='10%',
+                status='open',
+                sponsor_id=current_user.id
+            )
+            db.session.add(deal)
+            db.session.commit()
+            print(f"✅ Created new deal: {deal.title} (ID: {deal.id})")
+        else:
+            print(f"📌 Deal already exists: {existing_deal.title} (ID: {existing_deal.id})")
+            deal = existing_deal
+        
+        return jsonify({
+            'success': True,
+            'deal': {
+                'id': deal.id,
+                'title': deal.title,
+                'description': deal.description
+            }
+        }), 200
+    except Exception as e:
+        print(f"❌ Error syncing deal: {str(e)}")
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/deals/<int:deal_id>/messages', methods=['POST'])
 @token_required
 def send_chat_message(current_user, deal_id):
