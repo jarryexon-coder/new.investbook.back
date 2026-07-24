@@ -664,6 +664,17 @@ def mark_message_read(current_user, deal_id, message_id):
         print(f"Error marking message read: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/debug/token', methods=['GET'])
+@token_required
+def debug_token(current_user):
+    """Debug endpoint to check if token is working"""
+    return jsonify({
+        'authenticated': True,
+        'user_id': current_user.id,
+        'username': current_user.username,
+        'email': current_user.email
+    })
+
 # Import Stripe routes
 from stripe_routes import *
 
