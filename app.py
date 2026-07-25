@@ -17,6 +17,8 @@ from document_signing import DocumentSigning
 import json
 import hashlib
 from flask_caching import Cache
+from stripe_routes import stripe_bp
+app.register_blueprint(stripe_bp, url_prefix='/api')
 
 load_dotenv()
 
@@ -378,6 +380,17 @@ def cache_status():
         'cache_keys': ['all_deals', 'all_business_listings', 'last_apify_run']
     })
 
+# --- Cache endpoints (defined directly in app.py) ---
+@app.route('/api/cache-status', methods=['GET'])
+def cache_status():
+    """Check cache status"""
+    last_run = cache.get('last_apify_run')
+    return jsonify({
+        'last_apify_run': last_run,
+        'cache_health': 'healthy',
+        'cache_keys': ['all_deals', 'all_business_listings', 'last_apify_run']
+    })
+
 @app.route('/api/cache/businesses', methods=['GET'])
 def get_cached_businesses():
     """Get cached business listings"""
@@ -400,15 +413,11 @@ def load_cached_data():
         data = request.json
         if not data:
             return jsonify({'error': 'Missing data'}), 400
-        
         businesses = data if isinstance(data, list) else data.get('businesses', [])
-        
         if not businesses:
             return jsonify({'error': 'No businesses found in data'}), 400
-        
         cache.set('all_business_listings', businesses, timeout=86400)
         print(f"✅ Manually loaded {len(businesses)} businesses into cache")
-        
         return jsonify({
             'status': 'success',
             'message': f'Loaded {len(businesses)} businesses into cache',
@@ -418,7 +427,6 @@ def load_cached_data():
         print(f"❌ Error loading cache: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# ✅ Cached deals endpoint
 @app.route('/api/deals', methods=['GET'])
 @cache.cached(timeout=1800, key_prefix='all_deals')
 def get_deals():
@@ -676,7 +684,6 @@ def debug_token(current_user):
     })
 
 # Import Stripe routes
-from stripe_routes import *
 
 # --- WebSocket for Real-Time Chat ---
 @socketio.on('join_deal_chat')

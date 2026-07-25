@@ -1,16 +1,18 @@
 import os
 import stripe
-from flask import request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app
 from datetime import datetime, timedelta
 from functools import wraps
 import jwt
+
+# Create a blueprint
+stripe_bp = Blueprint('stripe', __name__)
 
 # ✅ Get Stripe key from environment with better error handling
 STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
 
 if not STRIPE_SECRET_KEY:
     print("❌ STRIPE_SECRET_KEY is not set in environment!")
-    # For development only - hardcode for testing
     STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
 
 stripe.api_key = STRIPE_SECRET_KEY
@@ -41,7 +43,7 @@ def token_required(f):
             return jsonify({'message': 'Token is missing!'}), 401
         
         try:
-            from app import app, User
+            from app import app, User, db
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
             current_user = User.query.get(data['user_id'])
             
@@ -58,7 +60,7 @@ def token_required(f):
 
 # --- Stripe Routes ---
 
-@app.route('/api/create-payment-intent', methods=['POST'])
+@stripe_bp.route('/create-payment-intent', methods=['POST'])
 @token_required
 def create_payment_intent(current_user):
     """Create a Stripe payment intent for subscription"""
@@ -87,7 +89,7 @@ def create_payment_intent(current_user):
         print(f"❌ Stripe error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/create-subscription', methods=['POST'])
+@stripe_bp.route('/create-subscription', methods=['POST'])
 @token_required
 def create_subscription(current_user):
     """Create a Stripe subscription"""
@@ -105,6 +107,7 @@ def create_subscription(current_user):
                 email=current_user.email,
                 metadata={'user_id': current_user.id}
             )
+            from app import db
             current_user.stripe_customer_id = customer.id
             db.session.commit()
         
@@ -132,17 +135,12 @@ def create_subscription(current_user):
         print(f"❌ Stripe error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/webhook', methods=['POST'])
+@stripe_bp.route('/webhook', methods=['POST'])
 def stripe_webhook():
     """Handle Stripe webhook events"""
     try:
         payload = request.get_data(as_text=True)
         sig_header = request.headers.get('Stripe-Signature')
-        
-        # Verify webhook signature (add your webhook secret)
-        # webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
-        # event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-        # event = json.loads(payload)
         
         # For now, just log the event
         print(f"📩 Webhook received: {payload[:200]}...")
