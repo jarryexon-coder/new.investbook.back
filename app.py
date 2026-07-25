@@ -239,20 +239,6 @@ def index():
         }
     })
 
-# --- Routes ---
-@app.route('/')
-def index():
-    return jsonify({
-        'message': 'InvestBook API is running!',
-        'version': '1.0.0',
-        'endpoints': {
-            'register': '/api/register',
-            'login': '/api/login',
-            'deals': '/api/deals',
-            'groups': '/api/groups'
-        }
-    })
-
 @app.route('/health')
 def health():
     return jsonify({
