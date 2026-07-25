@@ -17,9 +17,8 @@ from document_signing import DocumentSigning
 import json
 import hashlib
 from flask_caching import Cache
-from stripe_routes import stripe_bp
-app.register_blueprint(stripe_bp, url_prefix='/api')
 
+# Load environment variables FIRST
 load_dotenv()
 
 # 1. Create app first
@@ -52,6 +51,10 @@ with app.app_context():
 # 4. Import and register blueprints AFTER app is created
 from admin_dashboard import admin_bp
 app.register_blueprint(admin_bp, url_prefix='/admin')
+
+# Import and register Stripe blueprint AFTER app is created
+from stripe_routes import stripe_bp
+app.register_blueprint(stripe_bp, url_prefix='/api')
 
 # Error handlers
 @app.errorhandler(404)
@@ -221,6 +224,20 @@ def token_required(f):
         
         return f(current_user, *args, **kwargs)
     return decorated
+
+# --- Routes ---
+@app.route('/')
+def index():
+    return jsonify({
+        'message': 'InvestBook API is running!',
+        'version': '1.0.0',
+        'endpoints': {
+            'register': '/api/register',
+            'login': '/api/login',
+            'deals': '/api/deals',
+            'groups': '/api/groups'
+        }
+    })
 
 # --- Routes ---
 @app.route('/')
