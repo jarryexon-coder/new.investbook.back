@@ -6,7 +6,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
 import sys
-from flask_socketio import SocketIO, join_room, emit
+from flask_socketio import SocketIO, join_room, leave_room, emit
 import jwt
 from datetime import datetime, timedelta
 from functools import wraps
@@ -66,7 +66,7 @@ def internal_error(error):
     db.session.rollback()
     return jsonify({'error': 'Internal server error', 'message': str(error)}), 500
 
-# Add this before your routes
+# --- Routes ---
 @app.route('/')
 def home():
     return jsonify({
@@ -225,27 +225,7 @@ def token_required(f):
         return f(current_user, *args, **kwargs)
     return decorated
 
-# --- Routes ---
-@app.route('/')
-def index():
-    return jsonify({
-        'message': 'InvestBook API is running!',
-        'version': '1.0.0',
-        'endpoints': {
-            'register': '/api/register',
-            'login': '/api/login',
-            'deals': '/api/deals',
-            'groups': '/api/groups'
-        }
-    })
-
-@app.route('/health')
-def health():
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat()
-    })
-
+# --- API Routes ---
 @app.route('/api/register', methods=['POST'])
 def register():
     try:
@@ -373,17 +353,6 @@ def refresh_listings():
         return jsonify({'error': str(e)}), 500
 
 # --- Cache endpoints ---
-@app.route('/api/cache-status', methods=['GET'])
-def cache_status():
-    """Check cache status"""
-    last_run = cache.get('last_apify_run')
-    return jsonify({
-        'last_apify_run': last_run,
-        'cache_health': 'healthy',
-        'cache_keys': ['all_deals', 'all_business_listings', 'last_apify_run']
-    })
-
-# --- Cache endpoints (defined directly in app.py) ---
 @app.route('/api/cache-status', methods=['GET'])
 def cache_status():
     """Check cache status"""
@@ -524,7 +493,6 @@ def get_chat_messages(current_user, deal_id):
         print(f"Error getting messages: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/api/deals/<int:deal_id>/messages', methods=['POST'])
 @token_required
 def send_chat_message(current_user, deal_id):
@@ -588,7 +556,6 @@ def send_chat_message(current_user, deal_id):
         print(f"❌ Error sending message: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/api/deals/<int:deal_id>/messages/<int:message_id>/read', methods=['PUT'])
 @token_required
 def mark_message_read(current_user, deal_id, message_id):
@@ -612,7 +579,6 @@ def mark_message_read(current_user, deal_id, message_id):
     except Exception as e:
         print(f"Error marking message read: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 # --- Create or get a deal from cached data ---
 @app.route('/api/deals/sync', methods=['POST'])
@@ -674,7 +640,6 @@ def sync_deal(current_user):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/api/debug/token', methods=['GET'])
 @token_required
 def debug_token(current_user):
@@ -686,24 +651,7 @@ def debug_token(current_user):
         'email': current_user.email
     })
 
-# Import Stripe routes
-
 # --- WebSocket for Real-Time Chat ---
-@socketio.on('join_deal_chat')
-def handle_join_deal_chat(data):
-    deal_id = data['deal_id']
-    join_room(f'deal_{deal_id}')
-    emit('message', {'system': f"User joined deal {deal_id} chat"}, room=f'deal_{deal_id}')
-
-@socketio.on('deal_chat_message')
-def handle_deal_chat_message(data):
-    emit('message', {
-        'user': data['username'],
-        'message': data['message'],
-        'timestamp': datetime.utcnow().isoformat()
-    }, room=f"deal_{data['deal_id']}")
-
-# Add these to the existing WebSocket handlers
 @socketio.on('join_deal_chat')
 def handle_join_deal_chat(data):
     deal_id = data.get('deal_id')
