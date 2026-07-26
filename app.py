@@ -79,7 +79,9 @@ def home():
             'deals': '/api/deals [GET]',
             'create_deal': '/api/deals [POST]',
             'groups': '/api/groups [POST]',
-            'group_status': '/api/groups/<id>/status [GET]'
+            'group_status': '/api/groups/<id>/status [GET]',
+            'portfolio': '/api/portfolio [GET]',
+            'investments': '/api/investments [POST]'
         }
     })
 
@@ -172,14 +174,17 @@ class InvestmentMilestone(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     group = db.relationship('InvestmentGroup', backref='milestones')
 
-def calculate_trust_score(user):
-    avg_rating = db.session.query(db.func.avg(TrustReview.rating)).filter_by(reviewee_id=user.id).scalar() or 3
-    review_score = (avg_rating / 5) * 60
-    deal_score = min(user.investments_completed / 10, 1) * 30
-    verif_score = 10 if user.is_verified else 0
-    return review_score + deal_score + verif_score
+class PortfolioInvestment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    deal_id = db.Column(db.Integer, db.ForeignKey('deal.id'))
+    amount = db.Column(db.Float, nullable=False)
+    status = db.Column(db.String(50), default='active')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user = db.relationship('User', backref='portfolio_investments')
+    deal = db.relationship('Deal', backref='portfolio_investments')
 
-# --- Chat Models ---
 class ChatMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     deal_id = db.Column(db.Integer, db.ForeignKey('deal.id'))
@@ -190,6 +195,13 @@ class ChatMessage(db.Model):
     
     user = db.relationship('User', backref='chat_messages')
     deal = db.relationship('Deal', backref='chat_messages')
+
+def calculate_trust_score(user):
+    avg_rating = db.session.query(db.func.avg(TrustReview.rating)).filter_by(reviewee_id=user.id).scalar() or 3
+    review_score = (avg_rating / 5) * 60
+    deal_score = min(user.investments_completed / 10, 1) * 30
+    verif_score = 10 if user.is_verified else 0
+    return review_score + deal_score + verif_score
 
 # --- Authentication ---
 def token_required(f):
@@ -224,6 +236,249 @@ def token_required(f):
         
         return f(current_user, *args, **kwargs)
     return decorated
+
+# ===== PORTFOLIO ENDPOINTS =====
+
+@app.route('/api/portfolio', methods=['GET'])
+@token_required
+def get_portfolio(current_user):
+    """Get user's portfolio investments"""
+    try:
+        # Get user's investments from database
+        investments = PortfolioInvestment.query.filter_by(
+            user_id=current_user.id,
+            status='active'
+        ).all()
+        
+        if not investments:
+            # Return sample data for new users
+            sample_portfolio = {
+                "investments": [
+                    {
+                        "id": "1",
+                        "title": "Commercial Office Building",
+                        "type": "property",
+                        "amount": 250000,
+                        "date": "2024-01-15",
+                        "return": 12.5,
+                        "status": "active",
+                        "location": "New York, NY",
+                        "propertyType": "Office"
+                    },
+                    {
+                        "id": "2",
+                        "title": "Tech Startup Investment",
+                        "type": "business",
+                        "amount": 100000,
+                        "date": "2024-02-01",
+                        "return": 18.2,
+                        "status": "active",
+                        "location": "San Francisco, CA",
+                        "propertyType": "Technology"
+                    },
+                    {
+                        "id": "3",
+                        "title": "Retail Space Portfolio",
+                        "type": "property",
+                        "amount": 500000,
+                        "date": "2024-03-10",
+                        "return": 8.7,
+                        "status": "pending",
+                        "location": "Chicago, IL",
+                        "propertyType": "Retail"
+                    }
+                ],
+                "totalValue": 850000,
+                "totalInvestments": 3,
+                "averageReturn": 13.1
+            }
+            return jsonify(sample_portfolio), 200
+        
+        # Format real investments
+        portfolio_data = []
+        total_value = 0
+        
+        for inv in investments:
+            deal = Deal.query.get(inv.deal_id)
+            if deal:
+                portfolio_data.append({
+                    "id": str(inv.id),
+                    "title": deal.title,
+                    "type": "property",
+                    "amount": inv.amount,
+                    "date": inv.created_at.isoformat(),
+                    "return": 0,  # Calculate actual return if available
+                    "status": inv.status,
+                    "location": deal.location or "N/A",
+                    "propertyType": deal.asset_type
+                })
+                total_value += inv.amount
+        
+        return jsonify({
+            "investments": portfolio_data,
+            "totalValue": total_value,
+            "totalInvestments": len(portfolio_data),
+            "averageReturn": 0
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Portfolio error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/investments', methods=['POST'])
+@token_required
+def add_investment(current_user):
+    """Add an investment to user's portfolio"""
+    try:
+        data = request.get_json()
+        deal_id = data.get('dealId')
+        amount = data.get('amount')
+        
+        if not deal_id or not amount:
+            return jsonify({"error": "Missing dealId or amount"}), 400
+        
+        # Validate deal exists
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({"error": "Deal not found"}), 404
+        
+        # Check if user already invested in this deal
+        existing = PortfolioInvestment.query.filter_by(
+            user_id=current_user.id,
+            deal_id=deal_id,
+            status='active'
+        ).first()
+        
+        if existing:
+            return jsonify({"error": "Already invested in this deal"}), 400
+        
+        # Create investment
+        investment = PortfolioInvestment(
+            user_id=current_user.id,
+            deal_id=deal_id,
+            amount=float(amount),
+            status='active'
+        )
+        
+        db.session.add(investment)
+        db.session.commit()
+        
+        # Update user's investments count
+        current_user.investments_completed = (current_user.investments_completed or 0) + 1
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": "Investment added successfully",
+            "investment": {
+                "id": str(investment.id),
+                "dealId": deal_id,
+                "amount": float(amount),
+                "date": investment.created_at.isoformat()
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Add investment error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# ===== SUBSCRIPTION ENDPOINTS =====
+
+@app.route('/api/subscriptions/create-payment-intent', methods=['POST'])
+@token_required
+def create_payment_intent(current_user):
+    """Create Stripe payment intent for subscription"""
+    try:
+        data = request.get_json()
+        plan_id = data.get('planId', 'monthly')
+        
+        # Get price based on plan
+        prices = {
+            'monthly': 499,  # $4.99 in cents
+            'yearly': 4999,  # $49.99 in cents
+        }
+        
+        amount = prices.get(plan_id, 499)
+        
+        # Return payment intent data (in production, this would call Stripe)
+        return jsonify({
+            "clientSecret": "pi_1234567890_secret_1234567890",
+            "amount": amount,
+            "currency": "usd",
+            "planId": plan_id
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Payment intent error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/subscriptions/activate', methods=['POST'])
+@token_required
+def activate_subscription(current_user):
+    """Activate user's subscription"""
+    try:
+        data = request.get_json()
+        plan_id = data.get('planId', 'monthly')
+        
+        # Set subscription expiry (30 days for monthly, 365 for yearly)
+        days = 30 if plan_id == 'monthly' else 365
+        expiry = datetime.utcnow() + timedelta(days=days)
+        
+        current_user.subscription_plan = plan_id
+        current_user.subscription_expiry = expiry
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": f"Subscription activated for {plan_id} plan",
+            "expiry": expiry.isoformat()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Activate subscription error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/subscriptions/cancel', methods=['POST'])
+@token_required
+def cancel_subscription(current_user):
+    """Cancel user's subscription"""
+    try:
+        current_user.subscription_plan = None
+        current_user.subscription_expiry = None
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": "Subscription canceled successfully"
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Cancel subscription error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/subscriptions/status', methods=['GET'])
+@token_required
+def get_subscription_status(current_user):
+    """Get user's subscription status"""
+    try:
+        is_subscribed = (
+            current_user.subscription_plan and 
+            current_user.subscription_expiry and 
+            current_user.subscription_expiry > datetime.utcnow()
+        )
+        
+        return jsonify({
+            "isSubscribed": bool(is_subscribed),
+            "planId": current_user.subscription_plan,
+            "expiryDate": current_user.subscription_expiry.isoformat() if current_user.subscription_expiry else None
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Subscription status error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 # --- API Routes ---
 @app.route('/api/register', methods=['POST'])
@@ -292,7 +547,9 @@ def login():
             'id': user.id,
             'username': user.username,
             'email': user.email,
-            'trust_score': user.trust_score
+            'trust_score': user.trust_score,
+            'subscription_plan': user.subscription_plan,
+            'subscription_expiry': user.subscription_expiry.isoformat() if user.subscription_expiry else None
         }
         
         return jsonify({
@@ -306,18 +563,15 @@ def login():
 
 @app.route('/api/refresh-listings', methods=['POST'])
 def refresh_listings():
-    """Endpoint for Apify webhook to notify when data is refreshed"""
     try:
         data = request.get_json()
         print(f"📩 Webhook received at {datetime.utcnow().isoformat()}")
         print(f"📦 Data: {data}")
         
-        # Extract run information - handle both field names
         run_id = data.get('runId', 'unknown')
         dataset_id = data.get('datasetId', 'unknown')
         status = data.get('status', 'unknown')
         
-        # Try both field names for item count
         item_count = data.get('itemCount')
         if item_count is None:
             item_count = data.get('totalItems', 0)
@@ -325,12 +579,10 @@ def refresh_listings():
         print(f"✅ Run {run_id} completed with status: {status}")
         print(f"📊 Items collected: {item_count}")
         
-        # Clear the cache
         cache.delete('all_business_listings')
         cache.delete('all_deals')
         print("🗑️ Cache cleared for all_business_listings and all_deals")
         
-        # Store the latest run info
         cache.set('last_apify_run', {
             'runId': run_id,
             'datasetId': dataset_id,
@@ -352,10 +604,8 @@ def refresh_listings():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-# --- Cache endpoints ---
 @app.route('/api/cache-status', methods=['GET'])
 def cache_status():
-    """Check cache status"""
     last_run = cache.get('last_apify_run')
     return jsonify({
         'last_apify_run': last_run,
@@ -365,7 +615,6 @@ def cache_status():
 
 @app.route('/api/cache/businesses', methods=['GET'])
 def get_cached_businesses():
-    """Get cached business listings"""
     data = cache.get('all_business_listings')
     if data:
         return jsonify({
@@ -380,7 +629,6 @@ def get_cached_businesses():
 
 @app.route('/api/cache/load', methods=['POST'])
 def load_cached_data():
-    """Manually load data into cache"""
     try:
         data = request.json
         if not data:
@@ -435,7 +683,6 @@ def create_deal(current_user):
         db.session.add(deal)
         db.session.commit()
         
-        # Clear the cache for deals
         cache.delete('all_deals')
         
         return jsonify({
@@ -463,14 +710,11 @@ def create_deal(current_user):
 @app.route('/api/deals/<int:deal_id>/messages', methods=['GET'])
 @token_required
 def get_chat_messages(current_user, deal_id):
-    """Get all messages for a deal"""
     try:
-        # Check if user has access to this deal
         deal = Deal.query.get(deal_id)
         if not deal:
             return jsonify({'error': 'Deal not found'}), 404
 
-        # Check if user is the sponsor or has expressed interest
         if deal.sponsor_id != current_user.id:
             interest = DealInterest.query.filter_by(
                 deal_id=deal_id,
@@ -496,7 +740,6 @@ def get_chat_messages(current_user, deal_id):
 @app.route('/api/deals/<int:deal_id>/messages', methods=['POST'])
 @token_required
 def send_chat_message(current_user, deal_id):
-    """Send a message to a deal chat"""
     try:
         data = request.json
         message_text = data.get('message')
@@ -504,13 +747,11 @@ def send_chat_message(current_user, deal_id):
         if not message_text:
             return jsonify({'error': 'Message is required'}), 400
         
-        # Check if deal exists
         deal = Deal.query.get(deal_id)
         if not deal:
             print(f"❌ Deal not found: {deal_id}")
             return jsonify({'error': 'Deal not found'}), 404
         
-        # Check if user has access to this deal
         if deal.sponsor_id != current_user.id:
             interest = DealInterest.query.filter_by(
                 deal_id=deal_id, 
@@ -519,7 +760,6 @@ def send_chat_message(current_user, deal_id):
             if not interest:
                 return jsonify({'error': 'Access denied'}), 403
         
-        # Save message
         message = ChatMessage(
             deal_id=deal_id,
             user_id=current_user.id,
@@ -530,7 +770,6 @@ def send_chat_message(current_user, deal_id):
         
         print(f"✅ Message saved for deal {deal_id}")
         
-        # Emit via WebSocket
         socketio.emit('new_message', {
             'deal_id': deal_id,
             'message': {
@@ -559,7 +798,6 @@ def send_chat_message(current_user, deal_id):
 @app.route('/api/deals/<int:deal_id>/messages/<int:message_id>/read', methods=['PUT'])
 @token_required
 def mark_message_read(current_user, deal_id, message_id):
-    """Mark a message as read"""
     try:
         message = ChatMessage.query.get(message_id)
         if not message:
@@ -568,7 +806,6 @@ def mark_message_read(current_user, deal_id, message_id):
         if message.deal_id != deal_id:
             return jsonify({'error': 'Message does not belong to this deal'}), 400
         
-        # Only the recipient can mark as read
         if message.user_id == current_user.id:
             return jsonify({'error': 'Cannot mark own message as read'}), 400
         
@@ -580,11 +817,9 @@ def mark_message_read(current_user, deal_id, message_id):
         print(f"Error marking message read: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# --- Create or get a deal from cached data ---
 @app.route('/api/deals/sync', methods=['POST'])
 @token_required
 def sync_deal(current_user):
-    """Create or update a deal from cached data"""
     try:
         data = request.get_json()
         deal_id = data.get('dealId')
@@ -596,7 +831,6 @@ def sync_deal(current_user):
         if not deal_id:
             return jsonify({'error': 'Deal ID is required'}), 400
         
-        # Try to find existing deal by title first
         title = deal_data.get('title', '')
         existing_deal = None
         
@@ -604,7 +838,6 @@ def sync_deal(current_user):
             existing_deal = Deal.query.filter_by(title=title).first()
         
         if not existing_deal:
-            # Create a new deal
             price = deal_data.get('price', 0)
             if isinstance(price, str):
                 price = float(''.join(filter(str.isdigit, price))) if price else 0
@@ -643,7 +876,6 @@ def sync_deal(current_user):
 @app.route('/api/debug/token', methods=['GET'])
 @token_required
 def debug_token(current_user):
-    """Debug endpoint to check if token is working"""
     return jsonify({
         'authenticated': True,
         'user_id': current_user.id,
@@ -680,15 +912,12 @@ def handle_deal_chat_message(data):
         }, room=f"deal_{deal_id}")
 
 if __name__ == '__main__':
-    # ✅ Create tables if they don't exist
     with app.app_context():
         db.create_all()
         print("✅ Database tables created/verified")
     
-    # Get port from environment variable
     port = int(os.environ.get('PORT', 5000))
     
-    # In production, use eventlet with proper host
     if os.environ.get('RAILWAY_ENVIRONMENT'):
         print(f"Starting production server on port {port}")
         socketio.run(app, host='0.0.0.0', port=port, debug=False)
