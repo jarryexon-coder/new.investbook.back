@@ -196,6 +196,39 @@ class ChatMessage(db.Model):
     user = db.relationship('User', backref='chat_messages')
     deal = db.relationship('Deal', backref='chat_messages')
 
+# ===== ENHANCED CHAT MODELS =====
+
+class DealChatMessage(db.Model):
+    """Chat messages for deal-specific conversations"""
+    id = db.Column(db.Integer, primary_key=True)
+    deal_id = db.Column(db.Integer, db.ForeignKey('deal.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_edited = db.Column(db.Boolean, default=False)
+    is_deleted = db.Column(db.Boolean, default=False)
+    
+    user = db.relationship('User', backref='deal_chat_messages')
+    deal = db.relationship('Deal', backref='chat_messages_all')
+
+class DealChatParticipant(db.Model):
+    """Users participating in deal chats"""
+    id = db.Column(db.Integer, primary_key=True)
+    deal_id = db.Column(db.Integer, db.ForeignKey('deal.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_read_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_muted = db.Column(db.Boolean, default=False)
+    
+    user = db.relationship('User', backref='deal_chat_participants')
+    deal = db.relationship('Deal', backref='chat_participants')
+
+# Create new tables
+with app.app_context():
+    db.create_all()
+    print("✅ DealChat tables created/verified")
+
 def calculate_trust_score(user):
     avg_rating = db.session.query(db.func.avg(TrustReview.rating)).filter_by(reviewee_id=user.id).scalar() or 3
     review_score = (avg_rating / 5) * 60
@@ -882,6 +915,287 @@ def debug_token(current_user):
         'username': current_user.username,
         'email': current_user.email
     })
+
+# ===== ENHANCED CHAT ROUTES =====
+
+@app.route('/api/deals/<int:deal_id>/chat/join', methods=['POST'])
+@token_required
+def join_deal_chat(current_user, deal_id):
+    """Join a deal chat room"""
+    try:
+        # Check if deal exists
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        # Check if user is already a participant
+        existing = DealChatParticipant.query.filter_by(
+            deal_id=deal_id,
+            user_id=current_user.id
+        ).first()
+        
+        if existing:
+            return jsonify({'message': 'Already in chat'}), 200
+        
+        # Add user as participant
+        participant = DealChatParticipant(
+            deal_id=deal_id,
+            user_id=current_user.id
+        )
+        db.session.add(participant)
+        db.session.commit()
+        
+        # Send system message
+        system_message = DealChatMessage(
+            deal_id=deal_id,
+            user_id=current_user.id,
+            message=f"{current_user.username} joined the chat"
+        )
+        db.session.add(system_message)
+        db.session.commit()
+        
+        # Emit via WebSocket
+        socketio.emit('user_joined', {
+            'deal_id': deal_id,
+            'user': {
+                'id': current_user.id,
+                'username': current_user.username
+            }
+        }, room=f'deal_chat_{deal_id}')
+        
+        return jsonify({
+            'message': 'Joined chat successfully',
+            'participant': {
+                'user_id': current_user.id,
+                'username': current_user.username,
+                'joined_at': participant.joined_at.isoformat()
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Join chat error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/chat/participants', methods=['GET'])
+@token_required
+def get_chat_participants(current_user, deal_id):
+    """Get all participants in a deal chat"""
+    try:
+        participants = DealChatParticipant.query.filter_by(
+            deal_id=deal_id
+        ).all()
+        
+        return jsonify([{
+            'user_id': p.user_id,
+            'username': p.user.username,
+            'joined_at': p.joined_at.isoformat(),
+            'last_read_at': p.last_read_at.isoformat()
+        } for p in participants]), 200
+        
+    except Exception as e:
+        print(f"❌ Get participants error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/chat/messages', methods=['GET'])
+@token_required
+def get_deal_chat_messages(current_user, deal_id):
+    """Get all messages for a deal chat"""
+    try:
+        # Check if deal exists
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        # Check if user is a participant
+        participant = DealChatParticipant.query.filter_by(
+            deal_id=deal_id,
+            user_id=current_user.id
+        ).first()
+        
+        if not participant:
+            # Auto-join if not a participant
+            participant = DealChatParticipant(
+                deal_id=deal_id,
+                user_id=current_user.id
+            )
+            db.session.add(participant)
+            db.session.commit()
+        
+        # Get messages (not deleted)
+        messages = DealChatMessage.query.filter_by(
+            deal_id=deal_id,
+            is_deleted=False
+        ).order_by(DealChatMessage.created_at.asc()).all()
+        
+        # Update last_read_at
+        participant.last_read_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify([{
+            'id': m.id,
+            'user_id': m.user_id,
+            'username': m.user.username,
+            'message': m.message,
+            'created_at': m.created_at.isoformat(),
+            'is_edited': m.is_edited,
+            'is_system': m.user_id == 0  # System messages
+        } for m in messages]), 200
+        
+    except Exception as e:
+        print(f"❌ Get chat messages error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/chat/messages', methods=['POST'])
+@token_required
+def send_deal_chat_message(current_user, deal_id):
+    """Send a message to a deal chat"""
+    try:
+        data = request.json
+        message_text = data.get('message')
+        
+        if not message_text or not message_text.strip():
+            return jsonify({'error': 'Message is required'}), 400
+        
+        # Check if deal exists
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        # Ensure user is a participant
+        participant = DealChatParticipant.query.filter_by(
+            deal_id=deal_id,
+            user_id=current_user.id
+        ).first()
+        
+        if not participant:
+            # Auto-join
+            participant = DealChatParticipant(
+                deal_id=deal_id,
+                user_id=current_user.id
+            )
+            db.session.add(participant)
+            db.session.commit()
+        
+        # Save message
+        message = DealChatMessage(
+            deal_id=deal_id,
+            user_id=current_user.id,
+            message=message_text.strip()
+        )
+        db.session.add(message)
+        db.session.commit()
+        
+        # Update participant's last_read
+        participant.last_read_at = datetime.utcnow()
+        db.session.commit()
+        
+        # Get participant count
+        participant_count = DealChatParticipant.query.filter_by(
+            deal_id=deal_id
+        ).count()
+        
+        # Emit via WebSocket
+        socketio.emit('new_chat_message', {
+            'deal_id': deal_id,
+            'message': {
+                'id': message.id,
+                'user_id': message.user_id,
+                'username': current_user.username,
+                'message': message.message,
+                'created_at': message.created_at.isoformat(),
+                'is_edited': message.is_edited,
+                'participant_count': participant_count
+            }
+        }, room=f'deal_chat_{deal_id}')
+        
+        return jsonify({
+            'id': message.id,
+            'user_id': message.user_id,
+            'username': current_user.username,
+            'message': message.message,
+            'created_at': message.created_at.isoformat(),
+            'is_edited': message.is_edited
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Send message error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/chat/messages/<int:message_id>', methods=['DELETE'])
+@token_required
+def delete_deal_chat_message(current_user, deal_id, message_id):
+    """Delete a message (soft delete)"""
+    try:
+        message = DealChatMessage.query.get(message_id)
+        if not message:
+            return jsonify({'error': 'Message not found'}), 404
+        
+        # Only the author can delete
+        if message.user_id != current_user.id:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        message.is_deleted = True
+        db.session.commit()
+        
+        socketio.emit('message_deleted', {
+            'deal_id': deal_id,
+            'message_id': message_id
+        }, room=f'deal_chat_{deal_id}')
+        
+        return jsonify({'message': 'Message deleted'}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Delete message error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+# ===== WEBSOCKET EVENTS FOR DEAL CHAT =====
+
+@socketio.on('join_deal_chat_room')
+def handle_join_deal_chat_room(data):
+    """Join a deal chat room via WebSocket"""
+    deal_id = data.get('deal_id')
+    user_id = data.get('user_id')
+    
+    if deal_id and user_id:
+        room = f'deal_chat_{deal_id}'
+        join_room(room)
+        print(f"👤 User {user_id} joined chat room for deal {deal_id}")
+        
+        # Send current participant count
+        participant_count = DealChatParticipant.query.filter_by(
+            deal_id=deal_id
+        ).count()
+        emit('participant_count', {
+            'deal_id': deal_id,
+            'count': participant_count
+        }, room=room)
+
+@socketio.on('leave_deal_chat_room')
+def handle_leave_deal_chat_room(data):
+    """Leave a deal chat room via WebSocket"""
+    deal_id = data.get('deal_id')
+    user_id = data.get('user_id')
+    
+    if deal_id and user_id:
+        room = f'deal_chat_{deal_id}'
+        leave_room(room)
+        print(f"👤 User {user_id} left chat room for deal {deal_id}")
+
+@socketio.on('deal_chat_typing')
+def handle_deal_chat_typing(data):
+    """Handle typing indicator"""
+    deal_id = data.get('deal_id')
+    username = data.get('username')
+    
+    if deal_id and username:
+        room = f'deal_chat_{deal_id}'
+        emit('user_typing', {
+            'deal_id': deal_id,
+            'username': username
+        }, room=room, skip_sid=request.sid)
 
 # --- WebSocket for Real-Time Chat ---
 @socketio.on('join_deal_chat')
