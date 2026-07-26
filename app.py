@@ -270,6 +270,42 @@ def token_required(f):
         return f(current_user, *args, **kwargs)
     return decorated
 
+# ===== SUBSCRIPTION CHECK DECORATOR =====
+
+def subscription_required(f):
+    """Decorator to check if user has an active subscription"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        # Get current user from token_required first
+        # This assumes token_required is used before subscription_required
+        current_user = kwargs.get('current_user')
+        
+        if not current_user:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        # Check if user has active subscription
+        is_subscribed = (
+            current_user.subscription_plan and 
+            current_user.subscription_expiry and 
+            current_user.subscription_expiry > datetime.utcnow()
+        )
+        
+        # For test account, allow access (or check subscription)
+        # Remove this in production!
+        if current_user.username == 'testuser':
+            print(f"🔓 Test user {current_user.username} bypassing subscription check")
+            return f(*args, **kwargs)
+        
+        if not is_subscribed:
+            return jsonify({
+                'error': 'Subscription required',
+                'message': 'Please subscribe to access this feature',
+                'requires_subscription': True
+            }), 403
+        
+        return f(*args, **kwargs)
+    return decorated
+
 # ===== PORTFOLIO ENDPOINTS =====
 
 @app.route('/api/portfolio', methods=['GET'])
@@ -357,6 +393,42 @@ def get_portfolio(current_user):
     except Exception as e:
         print(f"❌ Portfolio error: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+# ===== PROTECTED ROUTES =====
+
+@app.route('/api/opportunities', methods=['GET'])
+@token_required
+@subscription_required
+def get_opportunities(current_user):
+    """Get opportunities - requires subscription"""
+    try:
+        # Return cached opportunities
+        from scraper_service import get_cached_opportunities
+        data = get_cached_opportunities()
+        return jsonify({
+            'success': True,
+            'data': data,
+            'requires_subscription': True
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/under200k', methods=['GET'])
+@token_required
+@subscription_required
+def get_under200k(current_user):
+    """Get under $200k listings - requires subscription"""
+    try:
+        # Return cached under 200k data
+        from scraper_service import get_under200k_listings
+        data = get_under200k_listings()
+        return jsonify({
+            'success': True,
+            'data': data,
+            'requires_subscription': True
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/investments', methods=['POST'])
 @token_required
