@@ -9,7 +9,7 @@ from functools import wraps
 # Import db from database.py
 from database import db
 
-# Import User from models.py (not app.py)
+# Import User from models.py
 from models import User
 
 stripe_bp = Blueprint('stripe', __name__)
@@ -54,20 +54,41 @@ def token_required(f):
     return decorated
 
 # ===== SUBSCRIPTION PLANS =====
+# Monthly Plans
 PLANS = {
     'view_only': {
-        'price_id': os.getenv('STRIPE_VIEW_ONLY_PRICE_ID'),
+        'price_id': os.getenv('STRIPE_VIEW_ONLY_PRICE_ID', 'price_1TxgY69OUuvX0WP5XqsK5DCM'),
         'name': 'View Only',
         'price': 4.99,
         'interval': 'month',
     },
     'chat': {
-        'price_id': os.getenv('STRIPE_CHAT_PRICE_ID'),
+        'price_id': os.getenv('STRIPE_CHAT_PRICE_ID', 'price_1TxgZQ9OUuvX0WP5rG3l4lv7'),
         'name': 'Chat & Network',
         'price': 9.99,
         'interval': 'month',
     },
 }
+
+# Yearly Plans
+PLANS_YEARLY = {
+    'view_only_yearly': {
+        'price_id': os.getenv('STRIPE_VIEW_ONLY_YEARLY_PRICE_ID', 'price_1TxgYp9OUuvX0WP594Z5D99R'),
+        'name': 'View Only (Yearly)',
+        'price': 49.99,
+        'interval': 'year',
+        'savings': 'Save $9.89/year',
+    },
+    'chat_yearly': {
+        'price_id': os.getenv('STRIPE_CHAT_YEARLY_PRICE_ID', 'price_1TxgZz9OUuvX0WP5D1FbLTit'),
+        'name': 'Chat & Network (Yearly)',
+        'price': 99.99,
+        'interval': 'year',
+        'savings': 'Save $19.89/year',
+    },
+}
+
+ALL_PLANS = {**PLANS, **PLANS_YEARLY}
 
 @stripe_bp.route('/create-checkout-session', methods=['POST'])
 @token_required
@@ -77,10 +98,10 @@ def create_checkout_session(current_user):
         data = request.get_json()
         plan_id = data.get('planId', 'view_only')
         
-        if plan_id not in PLANS:
+        if plan_id not in ALL_PLANS:
             return jsonify({'error': 'Invalid plan'}), 400
         
-        plan = PLANS[plan_id]
+        plan = ALL_PLANS[plan_id]
         price_id = plan['price_id']
         
         if not price_id:
@@ -172,7 +193,7 @@ def test_activate_subscription(current_user):
         if os.getenv('ENVIRONMENT') == 'production':
             return jsonify({'error': 'Not available in production'}), 403
         
-        days = 30
+        days = 30 if 'yearly' not in plan_id else 365
         expiry = datetime.utcnow() + timedelta(days=days)
         
         current_user.subscription_plan = plan_id
@@ -259,7 +280,8 @@ def handle_checkout_completed(session):
         if not user:
             return
         
-        days = 30
+        # Determine days based on plan
+        days = 365 if 'yearly' in plan_id else 30
         expiry = datetime.utcnow() + timedelta(days=days)
         
         user.subscription_plan = plan_id
@@ -267,7 +289,7 @@ def handle_checkout_completed(session):
         user.stripe_customer_id = customer_id
         
         db.session.commit()
-        print(f"✅ Subscription activated for user {user.username}")
+        print(f"✅ Subscription activated for user {user.username} ({plan_id})")
         
     except Exception as e:
         print(f"❌ Webhook error: {str(e)}")
@@ -286,10 +308,13 @@ def handle_invoice_paid(invoice):
         if not user:
             return
         
+        # Extend by 30 days for monthly, 365 for yearly
+        days = 365 if 'yearly' in (user.subscription_plan or '') else 30
+        
         if user.subscription_expiry:
-            new_expiry = user.subscription_expiry + timedelta(days=30)
+            new_expiry = user.subscription_expiry + timedelta(days=days)
         else:
-            new_expiry = datetime.utcnow() + timedelta(days=30)
+            new_expiry = datetime.utcnow() + timedelta(days=days)
         
         user.subscription_expiry = new_expiry
         db.session.commit()
