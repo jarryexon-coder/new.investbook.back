@@ -1,10 +1,13 @@
 import os
 import stripe
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import jwt
 from functools import wraps
+
+# Import db from database.py (same instance as app.py)
+from database import db
 
 stripe_bp = Blueprint('stripe', __name__)
 CORS(stripe_bp)
@@ -12,6 +15,10 @@ CORS(stripe_bp)
 # Initialize Stripe
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 print(f"🔑 Stripe key loaded: {stripe.api_key[:15] if stripe.api_key else 'Not set'}...")
+
+# ===== IMPORT USER MODEL FROM APP =====
+# We need to import User from app.py after it's created
+# This will be done inside functions to avoid circular imports
 
 # ===== TOKEN VERIFICATION =====
 def token_required(f):
@@ -31,10 +38,10 @@ def token_required(f):
             # Decode token
             data = jwt.decode(token, os.getenv('SECRET_KEY', 'dev-secret-change-me'), algorithms=['HS256'])
             
-            # Import User and db from app
-            from app import User, db
+            # Import User from app (after app is created)
+            from app import User
             
-            # Get user directly without app context (User.query works with the db instance)
+            # Use db from database.py
             current_user = User.query.get(data['user_id'])
             
             if not current_user:
@@ -74,8 +81,6 @@ PLANS = {
 def create_checkout_session(current_user):
     """Create a Stripe Checkout session"""
     try:
-        from app import db
-        
         data = request.get_json()
         plan_id = data.get('planId', 'view_only')
         
@@ -167,8 +172,6 @@ def get_subscription_status(current_user):
 def test_activate_subscription(current_user):
     """Test mode: Activate subscription without payment"""
     try:
-        from app import db
-        
         data = request.get_json()
         plan_id = data.get('planId', 'view_only')
         
@@ -190,7 +193,6 @@ def test_activate_subscription(current_user):
         }), 200
         
     except Exception as e:
-        from app import db
         db.session.rollback()
         print(f"❌ Test activate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -200,8 +202,6 @@ def test_activate_subscription(current_user):
 def cancel_subscription(current_user):
     """Cancel user's subscription"""
     try:
-        from app import db
-        
         current_user.subscription_plan = None
         current_user.subscription_expiry = None
         db.session.commit()
@@ -212,7 +212,6 @@ def cancel_subscription(current_user):
         }), 200
         
     except Exception as e:
-        from app import db
         db.session.rollback()
         print(f"❌ Cancel subscription error: {str(e)}")
         return jsonify({"error": str(e)}), 500
@@ -254,7 +253,7 @@ def stripe_webhook():
 def handle_checkout_completed(session):
     """Handle successful checkout"""
     try:
-        from app import User, db
+        from app import User
         
         user_id = session.get('metadata', {}).get('user_id')
         plan_id = session.get('metadata', {}).get('plan_id', 'view_only')
@@ -279,13 +278,12 @@ def handle_checkout_completed(session):
         
     except Exception as e:
         print(f"❌ Webhook error: {str(e)}")
-        from app import db
         db.session.rollback()
 
 def handle_invoice_paid(invoice):
     """Handle successful payment"""
     try:
-        from app import User, db
+        from app import User
         
         customer_id = invoice.get('customer')
         if not customer_id:
@@ -306,13 +304,12 @@ def handle_invoice_paid(invoice):
         
     except Exception as e:
         print(f"❌ Invoice error: {str(e)}")
-        from app import db
         db.session.rollback()
 
 def handle_subscription_deleted(subscription):
     """Handle subscription cancellation"""
     try:
-        from app import User, db
+        from app import User
         
         customer_id = subscription.get('customer')
         if not customer_id:
@@ -329,5 +326,4 @@ def handle_subscription_deleted(subscription):
         
     except Exception as e:
         print(f"❌ Cancellation error: {str(e)}")
-        from app import db
         db.session.rollback()

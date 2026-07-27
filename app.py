@@ -2,31 +2,27 @@
 # flask, flask-sqlalchemy, flask-bcrypt, flask-cors, flask-socketio, eventlet, pyjwt, python-dotenv, flask-caching, psycopg2-binary
 
 from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
-import sys
 from flask_socketio import SocketIO, join_room, leave_room, emit
 import jwt
 from datetime import datetime, timedelta
 from functools import wraps
 import os
 from dotenv import load_dotenv
-from trust_algorithm import TrustScoringEngine
-from document_signing import DocumentSigning
-import json
-import hashlib
 from flask_caching import Cache
 from sqlalchemy import text
-import time
 
-# Load environment variables FIRST
+# Import db from database.py (single instance)
+from database import db
+
+# Load environment variables
 load_dotenv()
 
-# 1. Create app first
+# 1. Create app
 app = Flask(__name__)
 
-# 2. Configure app with PostgreSQL
+# 2. Configure app
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-change-me')
 
 # ===== POSTGRESQL CONNECTION =====
@@ -35,7 +31,6 @@ if not DATABASE_URL:
     print("⚠️ DATABASE_URL not found, using SQLite for local development")
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///invest.db'
 else:
-    # Use PostgreSQL with connection pooling settings
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
     print(f"✅ Using PostgreSQL database")
 
@@ -55,21 +50,20 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     }
 }
 
-# Add caching configuration
 app.config['CACHE_TYPE'] = 'SimpleCache'
-app.config['CACHE_DEFAULT_TIMEOUT'] = 1800  # 30 minutes cache
+app.config['CACHE_DEFAULT_TIMEOUT'] = 1800
 
-# 3. Initialize extensions
-db = SQLAlchemy(app)
+# 3. Initialize extensions with app
+db.init_app(app)  # Initialize db with app
 bcrypt = Bcrypt(app)
 cache = Cache(app)
 
-# CORS - Allow all
+# CORS
 CORS(app, origins=["http://localhost:3000", "http://localhost:5000", "https://investbook-production.up.railway.app"])
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# 4. Import and register blueprints
+# 4. Register blueprints
 from admin_dashboard import admin_bp
 app.register_blueprint(admin_bp, url_prefix='/admin')
 
@@ -77,7 +71,6 @@ from stripe_routes import stripe_bp
 app.register_blueprint(stripe_bp, url_prefix='/api')
 
 # ===== DATABASE MODELS =====
-
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
@@ -246,7 +239,6 @@ def home():
 @app.route('/health')
 def health_check():
     try:
-        # Test database connection
         db.session.execute(text('SELECT 1'))
         db_status = 'connected'
         db_type = 'PostgreSQL'
