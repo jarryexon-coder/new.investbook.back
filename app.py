@@ -17,6 +17,8 @@ from document_signing import DocumentSigning
 import json
 import hashlib
 from flask_caching import Cache
+from sqlalchemy import text
+import time
 
 # Load environment variables FIRST
 load_dotenv()
@@ -27,23 +29,30 @@ app = Flask(__name__)
 # 2. Configure app with PostgreSQL
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-change-me')
 
-# ===== USE POSTGRESQL =====
-# Get the DATABASE_URL from Railway environment
+# ===== POSTGRESQL CONNECTION =====
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
-    # Fallback to SQLite for local development
     print("⚠️ DATABASE_URL not found, using SQLite for local development")
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///invest.db'
 else:
-    # Use PostgreSQL
+    # Use PostgreSQL with connection pooling settings
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-    print(f"✅ Using PostgreSQL database: {DATABASE_URL[:30]}...")
+    print(f"✅ Using PostgreSQL database")
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_size': 10,
+    'pool_size': 5,
     'pool_recycle': 300,
     'pool_pre_ping': True,
+    'pool_timeout': 30,
+    'max_overflow': 10,
+    'connect_args': {
+        'connect_timeout': 10,
+        'keepalives': 1,
+        'keepalives_idle': 30,
+        'keepalives_interval': 10,
+        'keepalives_count': 5,
+    }
 }
 
 # Add caching configuration
@@ -70,7 +79,7 @@ app.register_blueprint(stripe_bp, url_prefix='/api')
 # ===== DATABASE MODELS =====
 
 class User(db.Model):
-    __tablename__ = 'users'  # Explicit table name
+    __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
@@ -238,16 +247,18 @@ def home():
 def health_check():
     try:
         # Test database connection
-        db.session.execute('SELECT 1')
+        db.session.execute(text('SELECT 1'))
         db_status = 'connected'
+        db_type = 'PostgreSQL'
     except Exception as e:
         db_status = f'error: {str(e)}'
+        db_type = 'PostgreSQL (error)'
     
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
         'database': db_status,
-        'database_type': 'PostgreSQL' if os.getenv('DATABASE_URL') else 'SQLite'
+        'database_type': db_type
     })
 
 # ===== TOKEN REQUIRED DECORATOR =====
@@ -369,7 +380,6 @@ def login():
 @app.route('/api/portfolio', methods=['GET'])
 @token_required
 def get_portfolio(current_user):
-    """Get user's portfolio investments"""
     try:
         investments = PortfolioInvestment.query.filter_by(
             user_id=current_user.id,
@@ -516,9 +526,12 @@ def get_deals():
 
 # ===== CREATE TABLES =====
 with app.app_context():
-    db.create_all()
-    print("✅ Database tables created/verified")
-    print(f"📊 Using database: {app.config['SQLALCHEMY_DATABASE_URI'][:50]}...")
+    try:
+        db.create_all()
+        print("✅ Database tables created/verified")
+        print(f"📊 Using database: PostgreSQL" if os.getenv('DATABASE_URL') else "📊 Using database: SQLite")
+    except Exception as e:
+        print(f"❌ Database creation error: {str(e)}")
 
 # ===== RUN APP =====
 if __name__ == '__main__':
@@ -529,6 +542,3 @@ if __name__ == '__main__':
         socketio.run(app, host='0.0.0.0', port=port, debug=False)
     else:
         socketio.run(app, debug=True, port=port)
-
-
-
