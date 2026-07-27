@@ -28,14 +28,14 @@ def token_required(f):
             return jsonify({'message': 'Token is missing!'}), 401
         
         try:
+            # Decode token
             data = jwt.decode(token, os.getenv('SECRET_KEY', 'dev-secret-change-me'), algorithms=['HS256'])
             
-            # Import User inside the function with app context
+            # Import User and db from app
             from app import User, db
             
-            # Use db.session directly with app context
-            with current_app.app_context():
-                current_user = db.session.get(User, data['user_id'])
+            # Get user directly without app context (User.query works with the db instance)
+            current_user = User.query.get(data['user_id'])
             
             if not current_user:
                 return jsonify({'message': 'User not found!'}), 401
@@ -46,6 +46,8 @@ def token_required(f):
             return jsonify({'message': 'Invalid token!'}), 401
         except Exception as e:
             print(f"❌ Token verification error: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return jsonify({'message': 'Authentication error!'}), 401
         
         return f(current_user, *args, **kwargs)
@@ -90,22 +92,21 @@ def create_checkout_session(current_user):
                 'message': 'Test mode - subscription activated without payment'
             }), 200
         
-        customer_id = None
-        with current_app.app_context():
-            if current_user.stripe_customer_id:
-                customer_id = current_user.stripe_customer_id
-            else:
-                customer = stripe.Customer.create(
-                    email=current_user.email,
-                    name=current_user.username,
-                    metadata={
-                        'user_id': current_user.id,
-                        'username': current_user.username,
-                    }
-                )
-                customer_id = customer.id
-                current_user.stripe_customer_id = customer_id
-                db.session.commit()
+        # Get or create Stripe customer
+        if current_user.stripe_customer_id:
+            customer_id = current_user.stripe_customer_id
+        else:
+            customer = stripe.Customer.create(
+                email=current_user.email,
+                name=current_user.username,
+                metadata={
+                    'user_id': current_user.id,
+                    'username': current_user.username,
+                }
+            )
+            customer_id = customer.id
+            current_user.stripe_customer_id = customer_id
+            db.session.commit()
         
         # Create checkout session
         checkout_session = stripe.checkout.Session.create(
@@ -133,6 +134,8 @@ def create_checkout_session(current_user):
         
     except Exception as e:
         print(f"❌ Checkout error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @stripe_bp.route('/subscription-status', methods=['GET'])
@@ -176,10 +179,9 @@ def test_activate_subscription(current_user):
         days = 30
         expiry = datetime.utcnow() + timedelta(days=days)
         
-        with current_app.app_context():
-            current_user.subscription_plan = plan_id
-            current_user.subscription_expiry = expiry
-            db.session.commit()
+        current_user.subscription_plan = plan_id
+        current_user.subscription_expiry = expiry
+        db.session.commit()
         
         return jsonify({
             'success': True,
@@ -200,10 +202,9 @@ def cancel_subscription(current_user):
     try:
         from app import db
         
-        with current_app.app_context():
-            current_user.subscription_plan = None
-            current_user.subscription_expiry = None
-            db.session.commit()
+        current_user.subscription_plan = None
+        current_user.subscription_expiry = None
+        db.session.commit()
         
         return jsonify({
             "success": True,
@@ -262,20 +263,19 @@ def handle_checkout_completed(session):
         if not user_id:
             return
         
-        with current_app.app_context():
-            user = db.session.get(User, int(user_id))
-            if not user:
-                return
-            
-            days = 30
-            expiry = datetime.utcnow() + timedelta(days=days)
-            
-            user.subscription_plan = plan_id
-            user.subscription_expiry = expiry
-            user.stripe_customer_id = customer_id
-            
-            db.session.commit()
-            print(f"✅ Subscription activated for user {user.username}")
+        user = User.query.get(int(user_id))
+        if not user:
+            return
+        
+        days = 30
+        expiry = datetime.utcnow() + timedelta(days=days)
+        
+        user.subscription_plan = plan_id
+        user.subscription_expiry = expiry
+        user.stripe_customer_id = customer_id
+        
+        db.session.commit()
+        print(f"✅ Subscription activated for user {user.username}")
         
     except Exception as e:
         print(f"❌ Webhook error: {str(e)}")
@@ -291,19 +291,18 @@ def handle_invoice_paid(invoice):
         if not customer_id:
             return
         
-        with current_app.app_context():
-            user = User.query.filter_by(stripe_customer_id=customer_id).first()
-            if not user:
-                return
-            
-            if user.subscription_expiry:
-                new_expiry = user.subscription_expiry + timedelta(days=30)
-            else:
-                new_expiry = datetime.utcnow() + timedelta(days=30)
-            
-            user.subscription_expiry = new_expiry
-            db.session.commit()
-            print(f"✅ Subscription extended for user {user.username}")
+        user = User.query.filter_by(stripe_customer_id=customer_id).first()
+        if not user:
+            return
+        
+        if user.subscription_expiry:
+            new_expiry = user.subscription_expiry + timedelta(days=30)
+        else:
+            new_expiry = datetime.utcnow() + timedelta(days=30)
+        
+        user.subscription_expiry = new_expiry
+        db.session.commit()
+        print(f"✅ Subscription extended for user {user.username}")
         
     except Exception as e:
         print(f"❌ Invoice error: {str(e)}")
@@ -319,15 +318,14 @@ def handle_subscription_deleted(subscription):
         if not customer_id:
             return
         
-        with current_app.app_context():
-            user = User.query.filter_by(stripe_customer_id=customer_id).first()
-            if not user:
-                return
-            
-            user.subscription_plan = None
-            user.subscription_expiry = None
-            db.session.commit()
-            print(f"✅ Subscription canceled for user {user.username}")
+        user = User.query.filter_by(stripe_customer_id=customer_id).first()
+        if not user:
+            return
+        
+        user.subscription_plan = None
+        user.subscription_expiry = None
+        db.session.commit()
+        print(f"✅ Subscription canceled for user {user.username}")
         
     except Exception as e:
         print(f"❌ Cancellation error: {str(e)}")
