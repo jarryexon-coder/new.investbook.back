@@ -5,19 +5,21 @@ from flask_cors import CORS
 from datetime import datetime, timedelta
 import jwt
 from functools import wraps
-from models import User, db  # Assuming you have models.py
 
 stripe_bp = Blueprint('stripe', __name__)
 CORS(stripe_bp)
 
 # Initialize Stripe
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
-WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
+print(f"🔑 Stripe key loaded: {stripe.api_key[:15] if stripe.api_key else 'Not set'}...")
 
-# Token verification (reuse from main app)
+# ===== TOKEN VERIFICATION (will use app's User model) =====
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Import here to avoid circular imports
+        from app import User
+        
         token = None
         auth_header = request.headers.get('Authorization')
         
@@ -46,13 +48,13 @@ def token_required(f):
 # ===== SUBSCRIPTION PLANS =====
 PLANS = {
     'view_only': {
-        'price_id': os.getenv('STRIPE_VIEW_ONLY_PRICE_ID'),  # Set this in .env
+        'price_id': os.getenv('STRIPE_VIEW_ONLY_PRICE_ID'),
         'name': 'View Only',
         'price': 4.99,
         'interval': 'month',
     },
     'chat': {
-        'price_id': os.getenv('STRIPE_CHAT_PRICE_ID'),  # Set this in .env
+        'price_id': os.getenv('STRIPE_CHAT_PRICE_ID'),
         'name': 'Chat & Network',
         'price': 9.99,
         'interval': 'month',
@@ -64,6 +66,8 @@ PLANS = {
 def create_checkout_session(current_user):
     """Create a Stripe Checkout session"""
     try:
+        from app import db
+        
         data = request.get_json()
         plan_id = data.get('planId', 'view_only')
         
@@ -74,8 +78,6 @@ def create_checkout_session(current_user):
         price_id = plan['price_id']
         
         if not price_id:
-            # For testing - create a test price if not set
-            # In production, you should have real price IDs
             return jsonify({
                 'error': 'Payment not configured',
                 'test_mode': True,
@@ -126,109 +128,6 @@ def create_checkout_session(current_user):
         print(f"❌ Checkout error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@stripe_bp.route('/webhook', methods=['POST'])
-def stripe_webhook():
-    """Handle Stripe webhook events"""
-    payload = request.get_data(as_text=True)
-    sig_header = request.headers.get('Stripe-Signature')
-    
-    try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, WEBHOOK_SECRET
-        )
-    except ValueError:
-        return jsonify({'error': 'Invalid payload'}), 400
-    except stripe.error.SignatureVerificationError:
-        return jsonify({'error': 'Invalid signature'}), 400
-    
-    # Handle the event
-    if event['type'] == 'checkout.session.completed':
-        session = event['data']['object']
-        handle_checkout_completed(session)
-    elif event['type'] == 'invoice.paid':
-        invoice = event['data']['object']
-        handle_invoice_paid(invoice)
-    elif event['type'] == 'customer.subscription.deleted':
-        subscription = event['data']['object']
-        handle_subscription_canceled(subscription)
-    
-    return jsonify({'status': 'success'}), 200
-
-def handle_checkout_completed(session):
-    """Handle successful checkout"""
-    try:
-        user_id = session.get('metadata', {}).get('user_id')
-        plan_id = session.get('metadata', {}).get('plan_id', 'view_only')
-        
-        if not user_id:
-            print("❌ No user_id in session metadata")
-            return
-        
-        user = User.query.get(int(user_id))
-        if not user:
-            print(f"❌ User {user_id} not found")
-            return
-        
-        # Activate subscription
-        days = 30 if plan_id == 'view_only' else 30
-        expiry = datetime.utcnow() + timedelta(days=days)
-        
-        user.subscription_plan = plan_id
-        user.subscription_expiry = expiry
-        user.stripe_customer_id = session.get('customer')
-        
-        db.session.commit()
-        print(f"✅ Subscription activated for user {user.username} ({plan_id})")
-        
-    except Exception as e:
-        print(f"❌ Error handling checkout: {str(e)}")
-        db.session.rollback()
-
-def handle_invoice_paid(invoice):
-    """Handle successful payment"""
-    try:
-        customer_id = invoice.get('customer')
-        if not customer_id:
-            return
-        
-        user = User.query.filter_by(stripe_customer_id=customer_id).first()
-        if not user:
-            return
-        
-        # Extend subscription by 30 days
-        if user.subscription_expiry:
-            new_expiry = user.subscription_expiry + timedelta(days=30)
-        else:
-            new_expiry = datetime.utcnow() + timedelta(days=30)
-        
-        user.subscription_expiry = new_expiry
-        db.session.commit()
-        print(f"✅ Subscription extended for user {user.username}")
-        
-    except Exception as e:
-        print(f"❌ Error handling invoice: {str(e)}")
-        db.session.rollback()
-
-def handle_subscription_canceled(subscription):
-    """Handle subscription cancellation"""
-    try:
-        customer_id = subscription.get('customer')
-        if not customer_id:
-            return
-        
-        user = User.query.filter_by(stripe_customer_id=customer_id).first()
-        if not user:
-            return
-        
-        user.subscription_plan = None
-        user.subscription_expiry = None
-        db.session.commit()
-        print(f"✅ Subscription canceled for user {user.username}")
-        
-    except Exception as e:
-        print(f"❌ Error handling cancellation: {str(e)}")
-        db.session.rollback()
-
 @stripe_bp.route('/subscription-status', methods=['GET'])
 @token_required
 def get_subscription_status(current_user):
@@ -251,12 +150,13 @@ def get_subscription_status(current_user):
         print(f"❌ Subscription status error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# ===== TEST MODE - REMOVE IN PRODUCTION =====
 @stripe_bp.route('/test-activate', methods=['POST'])
 @token_required
 def test_activate_subscription(current_user):
-    """Test mode: Activate subscription without payment (REMOVE IN PRODUCTION)"""
+    """Test mode: Activate subscription without payment"""
     try:
+        from app import db
+        
         data = request.get_json()
         plan_id = data.get('planId', 'view_only')
         
@@ -264,7 +164,7 @@ def test_activate_subscription(current_user):
         if os.getenv('ENVIRONMENT') == 'production':
             return jsonify({'error': 'Not available in production'}), 403
         
-        days = 30 if plan_id == 'view_only' else 30
+        days = 30
         expiry = datetime.utcnow() + timedelta(days=days)
         
         current_user.subscription_plan = plan_id
@@ -278,6 +178,177 @@ def test_activate_subscription(current_user):
         }), 200
         
     except Exception as e:
+        from app import db
         db.session.rollback()
         print(f"❌ Test activate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@stripe_bp.route('/subscriptions/activate', methods=['POST'])
+@token_required
+def activate_subscription(current_user):
+    """Activate user's subscription"""
+    try:
+        from app import db
+        
+        data = request.get_json()
+        plan_id = data.get('planId', 'view_only')
+        
+        # Only allow in test mode
+        if os.getenv('ENVIRONMENT') == 'production':
+            return jsonify({'error': 'Use Stripe Checkout for production'}), 403
+        
+        days = 30
+        expiry = datetime.utcnow() + timedelta(days=days)
+        
+        current_user.subscription_plan = plan_id
+        current_user.subscription_expiry = expiry
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Test subscription activated for {plan_id}',
+            'expiry': expiry.isoformat()
+        }), 200
+        
+    except Exception as e:
+        from app import db
+        db.session.rollback()
+        print(f"❌ Activate subscription error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@stripe_bp.route('/subscriptions/cancel', methods=['POST'])
+@token_required
+def cancel_subscription(current_user):
+    """Cancel user's subscription"""
+    try:
+        from app import db
+        
+        current_user.subscription_plan = None
+        current_user.subscription_expiry = None
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": "Subscription canceled successfully"
+        }), 200
+        
+    except Exception as e:
+        from app import db
+        db.session.rollback()
+        print(f"❌ Cancel subscription error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# ===== WEBHOOK HANDLER =====
+@stripe_bp.route('/webhook', methods=['POST'])
+def stripe_webhook():
+    """Handle Stripe webhook events"""
+    payload = request.get_data(as_text=True)
+    sig_header = request.headers.get('Stripe-Signature')
+    webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
+    
+    if not webhook_secret:
+        print("⚠️ WEBHOOK_SECRET not set, using test mode")
+        event = stripe.Event.construct_from(
+            request.get_json(), stripe.api_key
+        )
+    else:
+        try:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, webhook_secret
+            )
+        except ValueError as e:
+            return jsonify({'error': 'Invalid payload'}), 400
+        except stripe.error.SignatureVerificationError as e:
+            return jsonify({'error': 'Invalid signature'}), 400
+    
+    print(f"📡 Webhook event: {event['type']}")
+    
+    if event['type'] == 'checkout.session.completed':
+        handle_checkout_completed(event['data']['object'])
+    elif event['type'] == 'invoice.paid':
+        handle_invoice_paid(event['data']['object'])
+    elif event['type'] == 'customer.subscription.deleted':
+        handle_subscription_deleted(event['data']['object'])
+    
+    return jsonify({'status': 'success'}), 200
+
+def handle_checkout_completed(session):
+    """Handle successful checkout"""
+    try:
+        from app import User, db
+        
+        user_id = session.get('metadata', {}).get('user_id')
+        plan_id = session.get('metadata', {}).get('plan_id', 'view_only')
+        customer_id = session.get('customer')
+        
+        if not user_id:
+            return
+        
+        user = User.query.get(int(user_id))
+        if not user:
+            return
+        
+        days = 30
+        expiry = datetime.utcnow() + timedelta(days=days)
+        
+        user.subscription_plan = plan_id
+        user.subscription_expiry = expiry
+        user.stripe_customer_id = customer_id
+        
+        db.session.commit()
+        print(f"✅ Subscription activated for user {user.username}")
+        
+    except Exception as e:
+        print(f"❌ Webhook error: {str(e)}")
+        from app import db
+        db.session.rollback()
+
+def handle_invoice_paid(invoice):
+    """Handle successful payment"""
+    try:
+        from app import User, db
+        
+        customer_id = invoice.get('customer')
+        if not customer_id:
+            return
+        
+        user = User.query.filter_by(stripe_customer_id=customer_id).first()
+        if not user:
+            return
+        
+        if user.subscription_expiry:
+            new_expiry = user.subscription_expiry + timedelta(days=30)
+        else:
+            new_expiry = datetime.utcnow() + timedelta(days=30)
+        
+        user.subscription_expiry = new_expiry
+        db.session.commit()
+        print(f"✅ Subscription extended for user {user.username}")
+        
+    except Exception as e:
+        print(f"❌ Invoice error: {str(e)}")
+        from app import db
+        db.session.rollback()
+
+def handle_subscription_deleted(subscription):
+    """Handle subscription cancellation"""
+    try:
+        from app import User, db
+        
+        customer_id = subscription.get('customer')
+        if not customer_id:
+            return
+        
+        user = User.query.filter_by(stripe_customer_id=customer_id).first()
+        if not user:
+            return
+        
+        user.subscription_plan = None
+        user.subscription_expiry = None
+        db.session.commit()
+        print(f"✅ Subscription canceled for user {user.username}")
+        
+    except Exception as e:
+        print(f"❌ Cancellation error: {str(e)}")
+        from app import db
+        db.session.rollback()
