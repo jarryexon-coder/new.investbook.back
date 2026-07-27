@@ -239,6 +239,30 @@ def login():
         print(f"Login error: {str(e)}")
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
+@app.route('/api/subscription-status', methods=['GET'])
+@token_required
+def get_subscription_status_direct(current_user):
+    """Get user's subscription status - Direct endpoint"""
+    try:
+        is_subscribed = (
+            current_user.subscription_plan and 
+            current_user.subscription_expiry and 
+            current_user.subscription_expiry > datetime.utcnow()
+        )
+        
+        return jsonify({
+            'isSubscribed': bool(is_subscribed),
+            'planId': current_user.subscription_plan,
+            'tier': current_user.subscription_plan,
+            'expiryDate': current_user.subscription_expiry.isoformat() if current_user.subscription_expiry else None
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Subscription status error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 # ===== CUSTOM PAYMENT SUCCESS PAGE =====
 @app.route('/payment/success')
 def payment_success():
