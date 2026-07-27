@@ -822,6 +822,48 @@ def add_investment(current_user):
         print(f"❌ Add investment error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/deals/ensure/<int:listing_id>', methods=['POST'])
+@token_required
+def ensure_deal_for_listing(current_user, listing_id):
+    """Create a deal from a listing if it doesn't exist"""
+    try:
+        # Check if deal exists
+        deal = Deal.query.filter_by(id=listing_id).first()
+        
+        if not deal:
+            # Try to find by propertyId or external ID
+            deal = Deal.query.filter_by(title=f"Property {listing_id}").first()
+        
+        if not deal:
+            # Create a new deal from the listing
+            data = request.get_json() or {}
+            deal = Deal(
+                id=listing_id,
+                title=data.get('title', f'Property {listing_id}'),
+                description=data.get('description', 'Listing from LoopNet'),
+                asset_type=data.get('propertyType', 'Commercial'),
+                total_price=float(data.get('price', 0)) or 1.0,
+                min_investment=1.0,
+                location=data.get('location', ''),
+                expected_roi='10%',
+                status='open',
+                sponsor_id=current_user.id
+            )
+            db.session.add(deal)
+            db.session.commit()
+            print(f"✅ Created deal for listing {listing_id}")
+        
+        return jsonify({
+            'success': True,
+            'deal_id': deal.id,
+            'message': 'Deal ready for chat'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Ensure deal error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 # ===== CREATE DEAL ENDPOINT =====
 @app.route('/api/deals', methods=['POST'])
 @token_required
