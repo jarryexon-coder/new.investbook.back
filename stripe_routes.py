@@ -17,9 +17,6 @@ print(f"🔑 Stripe key loaded: {stripe.api_key[:15] if stripe.api_key else 'Not
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        # Import inside function to avoid circular imports
-        from app import User, db
-        
         token = None
         auth_header = request.headers.get('Authorization')
         
@@ -33,9 +30,12 @@ def token_required(f):
         try:
             data = jwt.decode(token, os.getenv('SECRET_KEY', 'dev-secret-change-me'), algorithms=['HS256'])
             
-            # Use the app context to query
+            # Import User inside the function with app context
+            from app import User, db
+            
+            # Use db.session directly with app context
             with current_app.app_context():
-                current_user = User.query.get(data['user_id'])
+                current_user = db.session.get(User, data['user_id'])
             
             if not current_user:
                 return jsonify({'message': 'User not found!'}), 401
@@ -44,6 +44,9 @@ def token_required(f):
             return jsonify({'message': 'Token has expired!'}), 401
         except jwt.InvalidTokenError:
             return jsonify({'message': 'Invalid token!'}), 401
+        except Exception as e:
+            print(f"❌ Token verification error: {str(e)}")
+            return jsonify({'message': 'Authentication error!'}), 401
         
         return f(current_user, *args, **kwargs)
     return decorated
@@ -87,9 +90,8 @@ def create_checkout_session(current_user):
                 'message': 'Test mode - subscription activated without payment'
             }), 200
         
-        # Use app context for database operations
+        customer_id = None
         with current_app.app_context():
-            # Get or create Stripe customer
             if current_user.stripe_customer_id:
                 customer_id = current_user.stripe_customer_id
             else:
@@ -153,6 +155,8 @@ def get_subscription_status(current_user):
         
     except Exception as e:
         print(f"❌ Subscription status error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @stripe_bp.route('/test-activate', methods=['POST'])
@@ -259,7 +263,7 @@ def handle_checkout_completed(session):
             return
         
         with current_app.app_context():
-            user = User.query.get(int(user_id))
+            user = db.session.get(User, int(user_id))
             if not user:
                 return
             
