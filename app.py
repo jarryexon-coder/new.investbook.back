@@ -822,6 +822,89 @@ def add_investment(current_user):
         print(f"❌ Add investment error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+# ===== CREATE DEAL ENDPOINT =====
+@app.route('/api/deals', methods=['POST'])
+@token_required
+def create_deal(current_user):
+    """Create a new deal"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['title', 'description', 'asset_type', 'total_price', 'min_investment']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        # Create the deal
+        deal = Deal(
+            title=data['title'],
+            description=data['description'],
+            asset_type=data['asset_type'],
+            total_price=float(data['total_price']),
+            min_investment=float(data['min_investment']),
+            location=data.get('location', ''),
+            expected_roi=data.get('expected_roi', ''),
+            status='open',
+            sponsor_id=current_user.id
+        )
+        
+        db.session.add(deal)
+        db.session.commit()
+        
+        # Clear cache
+        cache.delete('all_deals')
+        
+        return jsonify({
+            'message': 'Deal created successfully',
+            'deal_id': deal.id,
+            'deal': {
+                'id': deal.id,
+                'title': deal.title,
+                'description': deal.description,
+                'asset_type': deal.asset_type,
+                'total_price': deal.total_price,
+                'min_investment': deal.min_investment,
+                'location': deal.location,
+                'expected_roi': deal.expected_roi,
+                'status': deal.status
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Create deal error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+# ===== GET SINGLE DEAL =====
+@app.route('/api/deals/<int:deal_id>', methods=['GET'])
+@token_required
+def get_deal(current_user, deal_id):
+    """Get a specific deal"""
+    try:
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        return jsonify({
+            'id': deal.id,
+            'title': deal.title,
+            'description': deal.description,
+            'asset_type': deal.asset_type,
+            'total_price': deal.total_price,
+            'min_investment': deal.min_investment,
+            'location': deal.location,
+            'expected_roi': deal.expected_roi,
+            'status': deal.status,
+            'sponsor_id': deal.sponsor_id,
+            'sponsor_username': deal.sponsor.username if deal.sponsor else None,
+            'created_at': deal.created_at.isoformat()
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Get deal error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 # ===== DEALS ROUTE =====
 @app.route('/api/deals', methods=['GET'])
 @cache.cached(timeout=1800, key_prefix='all_deals')
