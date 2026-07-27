@@ -137,8 +137,8 @@ def create_checkout_session(current_user):
                 'quantity': 1,
             }],
             mode='subscription',
-            success_url='https://investbook-production.up.railway.app/success?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url='https://investbook-production.up.railway.app/cancel',
+            success_url="https://investbook-production.up.railway.app/payment/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url="https://investbook-production.up.railway.app/payment/cancel",
             metadata={
                 'user_id': current_user.id,
                 'plan_id': plan_id,

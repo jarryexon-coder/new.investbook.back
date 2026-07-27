@@ -239,6 +239,252 @@ def login():
         print(f"Login error: {str(e)}")
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
+# ===== PAYMENT STATUS PAGES =====
+@app.route('/payment/success')
+def payment_success():
+    """Payment success page"""
+    session_id = request.args.get('session_id')
+    
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Payment Successful - InvestBook</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+            .container {
+                background: white;
+                padding: 48px;
+                border-radius: 16px;
+                text-align: center;
+                max-width: 500px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            }
+            .icon {
+                font-size: 72px;
+                margin-bottom: 16px;
+                color: #10b981;
+            }
+            h1 {
+                color: #1a1a1a;
+                font-size: 28px;
+                margin-bottom: 12px;
+            }
+            p {
+                color: #666;
+                font-size: 16px;
+                line-height: 1.6;
+                margin-bottom: 24px;
+            }
+            .button {
+                display: inline-block;
+                background: #2563eb;
+                color: white;
+                padding: 12px 32px;
+                border-radius: 8px;
+                text-decoration: none;
+                font-weight: 600;
+                transition: background 0.2s;
+            }
+            .button:hover {
+                background: #1d4ed8;
+            }
+            .details {
+                background: #f8f9fa;
+                padding: 16px;
+                border-radius: 8px;
+                margin: 16px 0;
+                text-align: left;
+                font-size: 14px;
+                color: #555;
+            }
+            .details span {
+                color: #1a1a1a;
+                font-weight: 600;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="icon">✅</div>
+            <h1>Payment Successful!</h1>
+            <p>Your subscription has been activated. You now have full access to all premium features.</p>
+            <div class="details">
+                <div>Session ID: <span>''' + str(session_id) + '''</span></div>
+                <div>Status: <span style="color:#10b981;">Active</span></div>
+            </div>
+            <a href="https://investbook-production.up.railway.app" class="button">Go to Dashboard</a>
+        </div>
+    </body>
+    </html>
+    '''
+
+@app.route('/payment/cancel')
+def payment_cancel():
+    """Payment cancel page"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Payment Canceled - InvestBook</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            }
+            .container {
+                background: white;
+                padding: 48px;
+                border-radius: 16px;
+                text-align: center;
+                max-width: 500px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            }
+            .icon {
+                font-size: 72px;
+                margin-bottom: 16px;
+            }
+            h1 {
+                color: #1a1a1a;
+                font-size: 28px;
+                margin-bottom: 12px;
+            }
+            p {
+                color: #666;
+                font-size: 16px;
+                line-height: 1.6;
+                margin-bottom: 24px;
+            }
+            .button {
+                display: inline-block;
+                background: #2563eb;
+                color: white;
+                padding: 12px 32px;
+                border-radius: 8px;
+                text-decoration: none;
+                font-weight: 600;
+                transition: background 0.2s;
+            }
+            .button:hover {
+                background: #1d4ed8;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="icon">↩️</div>
+            <h1>Payment Canceled</h1>
+            <p>You canceled the payment process. No charges were made to your account.</p>
+            <p>You can try again whenever you're ready to subscribe.</p>
+            <a href="https://investbook-production.up.railway.app" class="button">Return to App</a>
+        </div>
+    </body>
+    </html>
+    '''
+
+@app.route('/payment/error')
+def payment_error():
+    """Payment error page"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Payment Error - InvestBook</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+            }
+            .container {
+                background: white;
+                padding: 48px;
+                border-radius: 16px;
+                text-align: center;
+                max-width: 500px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            }
+            .icon {
+                font-size: 72px;
+                margin-bottom: 16px;
+            }
+            h1 {
+                color: #1a1a1a;
+                font-size: 28px;
+                margin-bottom: 12px;
+            }
+            p {
+                color: #666;
+                font-size: 16px;
+                line-height: 1.6;
+                margin-bottom: 8px;
+            }
+            .error-detail {
+                background: #fee2e2;
+                padding: 12px;
+                border-radius: 8px;
+                color: #dc2626;
+                font-size: 14px;
+                margin: 16px 0;
+            }
+            .button {
+                display: inline-block;
+                background: #2563eb;
+                color: white;
+                padding: 12px 32px;
+                border-radius: 8px;
+                text-decoration: none;
+                font-weight: 600;
+                transition: background 0.2s;
+            }
+            .button:hover {
+                background: #1d4ed8;
+            }
+            .support {
+                margin-top: 16px;
+                font-size: 14px;
+                color: #666;
+            }
+            .support a {
+                color: #2563eb;
+                text-decoration: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="icon">❌</div>
+            <h1>Payment Error</h1>
+            <p>Something went wrong while processing your payment.</p>
+            <div class="error-detail">
+                We encountered an issue. Please try again or contact support.
+            </div>
+            <a href="https://investbook-production.up.railway.app" class="button">Try Again</a>
+            <div class="support">
+                Need help? <a href="mailto:support@investbook.com">Contact Support</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    '''
+
 # ===== PORTFOLIO ROUTES =====
 @app.route('/api/portfolio', methods=['GET'])
 @token_required
