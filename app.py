@@ -239,18 +239,25 @@ def login():
         print(f"Login error: {str(e)}")
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
-# ===== PAYMENT STATUS PAGES =====
+# ===== CUSTOM PAYMENT SUCCESS PAGE =====
 @app.route('/payment/success')
 def payment_success():
-    """Payment success page"""
+    """Custom payment success page with app redirect"""
     session_id = request.args.get('session_id')
     
     return '''
     <!DOCTYPE html>
     <html>
     <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Payment Successful - InvestBook</title>
         <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
                 display: flex;
@@ -259,69 +266,203 @@ def payment_success():
                 min-height: 100vh;
                 margin: 0;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 20px;
             }
             .container {
                 background: white;
                 padding: 48px;
-                border-radius: 16px;
+                border-radius: 20px;
                 text-align: center;
                 max-width: 500px;
+                width: 100%;
                 box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                animation: slideUp 0.6s ease-out;
             }
-            .icon {
-                font-size: 72px;
-                margin-bottom: 16px;
-                color: #10b981;
+            @keyframes slideUp {
+                from {
+                    opacity: 0;
+                    transform: translateY(30px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            .success-icon {
+                width: 80px;
+                height: 80px;
+                background: #10b981;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0 auto 20px;
+                animation: bounce 0.8s ease-out;
+            }
+            @keyframes bounce {
+                0% { transform: scale(0); }
+                50% { transform: scale(1.2); }
+                70% { transform: scale(0.9); }
+                100% { transform: scale(1); }
+            }
+            .success-icon svg {
+                width: 40px;
+                height: 40px;
+                fill: white;
             }
             h1 {
                 color: #1a1a1a;
                 font-size: 28px;
+                font-weight: 700;
                 margin-bottom: 12px;
             }
-            p {
+            .subtitle {
                 color: #666;
                 font-size: 16px;
                 line-height: 1.6;
                 margin-bottom: 24px;
             }
-            .button {
-                display: inline-block;
-                background: #2563eb;
-                color: white;
-                padding: 12px 32px;
-                border-radius: 8px;
-                text-decoration: none;
-                font-weight: 600;
-                transition: background 0.2s;
-            }
-            .button:hover {
-                background: #1d4ed8;
-            }
             .details {
                 background: #f8f9fa;
                 padding: 16px;
-                border-radius: 8px;
-                margin: 16px 0;
+                border-radius: 12px;
+                margin: 16px 0 24px;
                 text-align: left;
                 font-size: 14px;
                 color: #555;
             }
-            .details span {
+            .details-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 4px 0;
+            }
+            .details-row span:first-child {
+                font-weight: 500;
                 color: #1a1a1a;
+            }
+            .details-row span:last-child {
+                color: #10b981;
                 font-weight: 600;
+            }
+            .button-group {
+                display: flex;
+                gap: 12px;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            .btn-primary {
+                display: inline-block;
+                background: #2563eb;
+                color: white;
+                padding: 14px 32px;
+                border-radius: 12px;
+                text-decoration: none;
+                font-weight: 600;
+                font-size: 16px;
+                transition: all 0.2s;
+                flex: 1;
+                min-width: 140px;
+                border: none;
+                cursor: pointer;
+            }
+            .btn-primary:hover {
+                background: #1d4ed8;
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+            }
+            .btn-secondary {
+                display: inline-block;
+                background: #f3f4f6;
+                color: #1a1a1a;
+                padding: 14px 32px;
+                border-radius: 12px;
+                text-decoration: none;
+                font-weight: 600;
+                font-size: 16px;
+                transition: all 0.2s;
+                flex: 1;
+                min-width: 140px;
+                border: none;
+                cursor: pointer;
+            }
+            .btn-secondary:hover {
+                background: #e5e7eb;
+            }
+            .features {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+                margin: 16px 0;
+                text-align: left;
+            }
+            .feature-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 14px;
+                color: #333;
+            }
+            .feature-item::before {
+                content: "✅";
+                font-size: 14px;
+            }
+            .footer {
+                margin-top: 24px;
+                padding-top: 16px;
+                border-top: 1px solid #e5e5e5;
+                font-size: 12px;
+                color: #999;
+            }
+            @media (max-width: 480px) {
+                .container {
+                    padding: 32px 20px;
+                }
+                .features {
+                    grid-template-columns: 1fr;
+                }
+                .button-group {
+                    flex-direction: column;
+                }
+                .btn-primary, .btn-secondary {
+                    width: 100%;
+                }
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <div class="icon">✅</div>
-            <h1>Payment Successful!</h1>
-            <p>Your subscription has been activated. You now have full access to all premium features.</p>
-            <div class="details">
-                <div>Session ID: <span>''' + str(session_id) + '''</span></div>
-                <div>Status: <span style="color:#10b981;">Active</span></div>
+            <div class="success-icon">
+                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
             </div>
-            <a href="https://investbook-production.up.railway.app" class="button">Go to Dashboard</a>
+            <h1>Welcome to InvestBook! 🎉</h1>
+            <p class="subtitle">Your subscription is now active. You have full access to all premium features.</p>
+            
+            <div class="details">
+                <div class="details-row">
+                    <span>Status</span>
+                    <span>✅ Active</span>
+                </div>
+                <div class="details-row">
+                    <span>Session ID</span>
+                    <span style="font-size:12px;word-break:break-all;">''' + str(session_id) + '''</span>
+                </div>
+            </div>
+            
+            <div class="features">
+                <div class="feature-item">Unlimited property views</div>
+                <div class="feature-item">Under $200k deals</div>
+                <div class="feature-item">Real-time notifications</div>
+                <div class="feature-item">Deal chat</div>
+            </div>
+            
+            <div class="button-group">
+                <a href="https://investbook-production.up.railway.app" class="btn-primary">Go to Dashboard</a>
+                <a href="https://investbook-production.up.railway.app" class="btn-secondary">Explore Deals</a>
+            </div>
+            
+            <div class="footer">
+                Questions? Contact us at <a href="mailto:support@investbook.com" style="color:#2563eb;text-decoration:none;">support@investbook.com</a>
+            </div>
         </div>
     </body>
     </html>
@@ -329,13 +470,20 @@ def payment_success():
 
 @app.route('/payment/cancel')
 def payment_cancel():
-    """Payment cancel page"""
+    """Custom payment cancel page"""
     return '''
     <!DOCTYPE html>
     <html>
     <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Payment Canceled - InvestBook</title>
         <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
                 display: flex;
@@ -344,14 +492,21 @@ def payment_cancel():
                 min-height: 100vh;
                 margin: 0;
                 background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                padding: 20px;
             }
             .container {
                 background: white;
                 padding: 48px;
-                border-radius: 16px;
+                border-radius: 20px;
                 text-align: center;
                 max-width: 500px;
+                width: 100%;
                 box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                animation: slideUp 0.6s ease-out;
+            }
+            @keyframes slideUp {
+                from { opacity: 0; transform: translateY(30px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             .icon {
                 font-size: 72px;
@@ -366,20 +521,39 @@ def payment_cancel():
                 color: #666;
                 font-size: 16px;
                 line-height: 1.6;
-                margin-bottom: 24px;
+                margin-bottom: 8px;
             }
-            .button {
+            .btn-primary {
                 display: inline-block;
                 background: #2563eb;
                 color: white;
-                padding: 12px 32px;
-                border-radius: 8px;
+                padding: 14px 32px;
+                border-radius: 12px;
                 text-decoration: none;
                 font-weight: 600;
-                transition: background 0.2s;
+                font-size: 16px;
+                transition: all 0.2s;
+                border: none;
+                cursor: pointer;
+                margin-top: 16px;
             }
-            .button:hover {
+            .btn-primary:hover {
                 background: #1d4ed8;
+                transform: translateY(-2px);
+            }
+            .footer {
+                margin-top: 24px;
+                padding-top: 16px;
+                border-top: 1px solid #e5e5e5;
+                font-size: 12px;
+                color: #999;
+            }
+            .footer a {
+                color: #2563eb;
+                text-decoration: none;
+            }
+            @media (max-width: 480px) {
+                .container { padding: 32px 20px; }
             }
         </style>
     </head>
@@ -388,8 +562,11 @@ def payment_cancel():
             <div class="icon">↩️</div>
             <h1>Payment Canceled</h1>
             <p>You canceled the payment process. No charges were made to your account.</p>
-            <p>You can try again whenever you're ready to subscribe.</p>
-            <a href="https://investbook-production.up.railway.app" class="button">Return to App</a>
+            <p style="margin-top:8px;">You can try again whenever you're ready to subscribe.</p>
+            <a href="https://investbook-production.up.railway.app" class="btn-primary">Return to InvestBook</a>
+            <div class="footer">
+                Questions? <a href="mailto:support@investbook.com">support@investbook.com</a>
+            </div>
         </div>
     </body>
     </html>
