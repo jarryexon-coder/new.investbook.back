@@ -917,6 +917,195 @@ def get_deals():
         'expected_roi': d.expected_roi, 'sponsor_username': d.sponsor.username
     } for d in deals])
 
+# ===== CHAT ENDPOINTS =====
+
+@app.route('/api/deals/<int:deal_id>/chat/join', methods=['POST'])
+@token_required
+def join_deal_chat(current_user, deal_id):
+    """Join a deal chat room"""
+    try:
+        # Check if deal exists
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        # Check if user is already a participant
+        existing = DealChatParticipant.query.filter_by(
+            deal_id=deal_id,
+            user_id=current_user.id
+        ).first()
+        
+        if existing:
+            return jsonify({'message': 'Already in chat'}), 200
+        
+        # Add user as participant
+        participant = DealChatParticipant(
+            deal_id=deal_id,
+            user_id=current_user.id
+        )
+        db.session.add(participant)
+        db.session.commit()
+        
+        # Send system message
+        system_message = DealChatMessage(
+            deal_id=deal_id,
+            user_id=current_user.id,
+            message=f"{current_user.username} joined the chat"
+        )
+        db.session.add(system_message)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Joined chat successfully',
+            'participant': {
+                'user_id': current_user.id,
+                'username': current_user.username,
+                'joined_at': participant.joined_at.isoformat()
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Join chat error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/chat/participants', methods=['GET'])
+@token_required
+def get_chat_participants(current_user, deal_id):
+    """Get all participants in a deal chat"""
+    try:
+        participants = DealChatParticipant.query.filter_by(
+            deal_id=deal_id
+        ).all()
+        
+        return jsonify([{
+            'user_id': p.user_id,
+            'username': p.user.username,
+            'joined_at': p.joined_at.isoformat(),
+            'last_read_at': p.last_read_at.isoformat()
+        } for p in participants]), 200
+        
+    except Exception as e:
+        print(f"❌ Get participants error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/chat/messages', methods=['GET'])
+@token_required
+def get_deal_chat_messages(current_user, deal_id):
+    """Get all messages for a deal chat"""
+    try:
+        # Check if deal exists
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        # Get messages (not deleted)
+        messages = DealChatMessage.query.filter_by(
+            deal_id=deal_id,
+            is_deleted=False
+        ).order_by(DealChatMessage.created_at.asc()).all()
+        
+        return jsonify([{
+            'id': m.id,
+            'user_id': m.user_id,
+            'username': m.user.username,
+            'message': m.message,
+            'created_at': m.created_at.isoformat(),
+            'is_edited': m.is_edited,
+            'is_system': m.user_id == 0
+        } for m in messages]), 200
+        
+    except Exception as e:
+        print(f"❌ Get chat messages error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/chat/messages', methods=['POST'])
+@token_required
+def send_deal_chat_message(current_user, deal_id):
+    """Send a message to a deal chat"""
+    try:
+        data = request.json
+        message_text = data.get('message')
+        
+        if not message_text or not message_text.strip():
+            return jsonify({'error': 'Message is required'}), 400
+        
+        # Check if deal exists
+        deal = Deal.query.get(deal_id)
+        if not deal:
+            return jsonify({'error': 'Deal not found'}), 404
+        
+        # Ensure user is a participant
+        participant = DealChatParticipant.query.filter_by(
+            deal_id=deal_id,
+            user_id=current_user.id
+        ).first()
+        
+        if not participant:
+            # Auto-join
+            participant = DealChatParticipant(
+                deal_id=deal_id,
+                user_id=current_user.id
+            )
+            db.session.add(participant)
+            db.session.commit()
+        
+        # Save message
+        message = DealChatMessage(
+            deal_id=deal_id,
+            user_id=current_user.id,
+            message=message_text.strip()
+        )
+        db.session.add(message)
+        db.session.commit()
+        
+        # Update participant's last_read
+        participant.last_read_at = datetime.utcnow()
+        db.session.commit()
+        
+        # Get participant count
+        participant_count = DealChatParticipant.query.filter_by(
+            deal_id=deal_id
+        ).count()
+        
+        return jsonify({
+            'id': message.id,
+            'user_id': message.user_id,
+            'username': current_user.username,
+            'message': message.message,
+            'created_at': message.created_at.isoformat(),
+            'is_edited': message.is_edited,
+            'participant_count': participant_count
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Send message error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/deals/<int:deal_id>/chat/messages/<int:message_id>', methods=['DELETE'])
+@token_required
+def delete_deal_chat_message(current_user, deal_id, message_id):
+    """Delete a message (soft delete)"""
+    try:
+        message = DealChatMessage.query.get(message_id)
+        if not message:
+            return jsonify({'error': 'Message not found'}), 404
+        
+        # Only the author can delete
+        if message.user_id != current_user.id:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        message.is_deleted = True
+        db.session.commit()
+        
+        return jsonify({'message': 'Message deleted'}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Delete message error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 # ===== CREATE TABLES =====
 with app.app_context():
     try:
