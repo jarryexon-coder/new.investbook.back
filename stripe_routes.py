@@ -127,11 +127,11 @@ def create_checkout_session(current_user):
             current_user.stripe_customer_id = customer_id
             db.session.commit()
         
-        # Create checkout session with Managed Payments support
-        # REMOVED: payment_method_types (not supported with Managed Payments)
-        # REMOVED: payment_method_options (not supported with Managed Payments)
+        # Create checkout session WITHOUT Managed Payments
+        # This avoids the tax code requirement
         checkout_session = stripe.checkout.Session.create(
             customer=customer_id,
+            payment_method_types=['card'],
             line_items=[{
                 'price': price_id,
                 'quantity': 1,
@@ -144,8 +144,8 @@ def create_checkout_session(current_user):
                 'plan_id': plan_id,
                 'username': current_user.username,
             },
-            # Enable Managed Payments
-            managed_payments={'enabled': True},
+            # DISABLE Managed Payments
+            managed_payments={'enabled': False},
         )
         
         return jsonify({
@@ -283,7 +283,6 @@ def handle_checkout_completed(session):
         if not user:
             return
         
-        # Determine days based on plan
         days = 365 if 'yearly' in plan_id else 30
         expiry = datetime.utcnow() + timedelta(days=days)
         
@@ -311,7 +310,6 @@ def handle_invoice_paid(invoice):
         if not user:
             return
         
-        # Extend by 30 days for monthly, 365 for yearly
         days = 365 if 'yearly' in (user.subscription_plan or '') else 30
         
         if user.subscription_expiry:
