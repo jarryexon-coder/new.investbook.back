@@ -127,10 +127,11 @@ def create_checkout_session(current_user):
             current_user.stripe_customer_id = customer_id
             db.session.commit()
         
-        # Create checkout session
+        # Create checkout session with Managed Payments support
+        # REMOVED: payment_method_types (not supported with Managed Payments)
+        # REMOVED: payment_method_options (not supported with Managed Payments)
         checkout_session = stripe.checkout.Session.create(
             customer=customer_id,
-            payment_method_types=['card'],
             line_items=[{
                 'price': price_id,
                 'quantity': 1,
@@ -142,7 +143,9 @@ def create_checkout_session(current_user):
                 'user_id': current_user.id,
                 'plan_id': plan_id,
                 'username': current_user.username,
-            }
+            },
+            # Enable Managed Payments
+            managed_payments={'enabled': True},
         )
         
         return jsonify({
