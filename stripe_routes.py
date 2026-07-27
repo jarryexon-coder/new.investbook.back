@@ -6,8 +6,11 @@ from datetime import datetime, timedelta
 import jwt
 from functools import wraps
 
-# Import db from database.py (same instance as app.py)
+# Import db from database.py
 from database import db
+
+# Import User from models.py (not app.py)
+from models import User
 
 stripe_bp = Blueprint('stripe', __name__)
 CORS(stripe_bp)
@@ -15,10 +18,6 @@ CORS(stripe_bp)
 # Initialize Stripe
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 print(f"🔑 Stripe key loaded: {stripe.api_key[:15] if stripe.api_key else 'Not set'}...")
-
-# ===== IMPORT USER MODEL FROM APP =====
-# We need to import User from app.py after it's created
-# This will be done inside functions to avoid circular imports
 
 # ===== TOKEN VERIFICATION =====
 def token_required(f):
@@ -35,13 +34,7 @@ def token_required(f):
             return jsonify({'message': 'Token is missing!'}), 401
         
         try:
-            # Decode token
             data = jwt.decode(token, os.getenv('SECRET_KEY', 'dev-secret-change-me'), algorithms=['HS256'])
-            
-            # Import User from app (after app is created)
-            from app import User
-            
-            # Use db from database.py
             current_user = User.query.get(data['user_id'])
             
             if not current_user:
@@ -253,7 +246,7 @@ def stripe_webhook():
 def handle_checkout_completed(session):
     """Handle successful checkout"""
     try:
-        from app import User
+        from models import User
         
         user_id = session.get('metadata', {}).get('user_id')
         plan_id = session.get('metadata', {}).get('plan_id', 'view_only')
@@ -283,7 +276,7 @@ def handle_checkout_completed(session):
 def handle_invoice_paid(invoice):
     """Handle successful payment"""
     try:
-        from app import User
+        from models import User
         
         customer_id = invoice.get('customer')
         if not customer_id:
@@ -309,7 +302,7 @@ def handle_invoice_paid(invoice):
 def handle_subscription_deleted(subscription):
     """Handle subscription cancellation"""
     try:
-        from app import User
+        from models import User
         
         customer_id = subscription.get('customer')
         if not customer_id:
