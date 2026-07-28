@@ -1,0 +1,15 @@
+# Exclude these, but NOT images
+.git
+.gitignore
+*.md
+*.pyc
+__pycache__
+.env
+*.log
+*.tmp
+*.backup
+*.swp
+
+# But DO include images
+!images/
+!images/*
