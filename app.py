@@ -1223,6 +1223,43 @@ def get_image_count():
         'status': 'ok'
     })
 
+@app.route('/api/debug/images')
+def debug_images():
+    """Debug endpoint to check images directory"""
+    import os
+    import json
+    
+    image_dir = '/app/images'
+    result = {
+        'image_dir_exists': os.path.exists(image_dir),
+        'image_dir_path': image_dir,
+        'files': [],
+        'count': 0
+    }
+    
+    if os.path.exists(image_dir):
+        try:
+            files = os.listdir(image_dir)
+            result['count'] = len(files)
+            result['files'] = files[:10]  # First 10 files
+        except Exception as e:
+            result['error'] = str(e)
+    
+    return jsonify(result)
+
+@app.route('/api/health/images')
+def health_images():
+    """Simple health check for images"""
+    import os
+    image_dir = '/app/images'
+    exists = os.path.exists(image_dir)
+    count = len(os.listdir(image_dir)) if exists else 0
+    return jsonify({
+        'status': 'ok',
+        'image_directory_exists': exists,
+        'image_count': count
+    })
+
 # ===== CREATE TABLES =====
 with app.app_context():
     try:
