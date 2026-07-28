@@ -1223,6 +1223,27 @@ def get_image_count():
         'status': 'ok'
     })
 
+# ===== SERVE IMAGES =====
+@app.route('/images/<filename>')
+def serve_image(filename):
+    """Serve images from the images directory"""
+    from flask import send_from_directory, abort
+    import os
+    
+    # Security: prevent directory traversal
+    if '..' in filename or filename.startswith('/'):
+        abort(404)
+    
+    # Check both possible locations
+    image_paths = ['/app/images', 'images']
+    
+    for img_dir in image_paths:
+        file_path = os.path.join(img_dir, filename)
+        if os.path.exists(file_path):
+            return send_from_directory(img_dir, filename)
+    
+    abort(404)
+
 @app.route('/api/debug/images')
 def debug_images():
     """Debug endpoint to check images directory"""
