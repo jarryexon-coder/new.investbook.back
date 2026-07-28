@@ -1164,8 +1164,64 @@ def test_image(index):
 def image_count():
     """Get count of available images"""
     import os
-    image_files = [f for f in os.listdir('images') if f.endswith(('.jpg', '.png', '.webp', '.jpeg'))]
-    return {"count": len(image_files)}
+    image_dir = 'images'
+    if os.path.exists(image_dir):
+        image_files = [f for f in os.listdir(image_dir) if f.endswith(('.jpg', '.png', '.webp', '.jpeg'))]
+        return jsonify({
+            'count': len(image_files),
+            'mapping_count': len(json.load(open('image_mapping.json'))) if os.path.exists('image_mapping.json') else 0
+        })
+    return jsonify({'count': 0})
+
+@app.route('/image_mapping.json')
+def serve_image_mapping():
+    """Serve the image mapping JSON file"""
+    import json
+    import os
+    
+    mapping_file = 'image_mapping.json'
+    if os.path.exists(mapping_file):
+        with open(mapping_file, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    return jsonify({'error': 'Mapping file not found'}), 404
+
+@app.route('/api/image-mapping')
+def get_image_mapping():
+    """Serve the image mapping JSON"""
+    import json
+    import os
+    
+    mapping_file = 'image_mapping.json'
+    if os.path.exists(mapping_file):
+        with open(mapping_file, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    return jsonify({'error': 'Mapping file not found'}), 404
+
+@app.route('/api/images/count')
+def get_image_count():
+    """Get count of available images and mapping"""
+    import json
+    import os
+    
+    image_dir = 'images'
+    image_count = 0
+    mapping_count = 0
+    
+    if os.path.exists(image_dir):
+        image_count = len([f for f in os.listdir(image_dir) if f.endswith(('.jpg', '.png', '.webp', '.jpeg'))])
+    
+    mapping_file = 'image_mapping.json'
+    if os.path.exists(mapping_file):
+        with open(mapping_file, 'r') as f:
+            mapping_count = len(json.load(f))
+    
+    return jsonify({
+        'images': image_count,
+        'mapped': mapping_count,
+        'status': 'ok'
+    })
 
 # ===== CREATE TABLES =====
 with app.app_context():
