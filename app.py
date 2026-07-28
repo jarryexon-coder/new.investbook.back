@@ -1244,6 +1244,31 @@ def serve_image(filename):
     
     abort(404)
 
+@app.route('/api/debug/images/all')
+def debug_images_all():
+    """List ALL images in the directory (no truncation)"""
+    import os
+    image_dir = '/app/images'
+    result = {
+        'exists': os.path.exists(image_dir),
+        'count': 0,
+        'files': []
+    }
+    
+    if os.path.exists(image_dir):
+        try:
+            # Get ALL files
+            all_files = os.listdir(image_dir)
+            # Filter out directories and hidden files
+            files = [f for f in all_files if not f.startswith('.') and os.path.isfile(os.path.join(image_dir, f))]
+            result['count'] = len(files)
+            result['files'] = sorted(files)  # ALL files, no truncation
+            result['total_files'] = len(files)
+        except Exception as e:
+            result['error'] = str(e)
+    
+    return jsonify(result)
+
 @app.route('/api/debug/images')
 def debug_images():
     """Debug endpoint to check images directory"""
