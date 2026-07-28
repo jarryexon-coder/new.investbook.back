@@ -1148,6 +1148,25 @@ def delete_deal_chat_message(current_user, deal_id, message_id):
         print(f"❌ Delete message error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+# ===== TEST IMAGE ENDPOINT =====
+@app.route('/api/test-image/<int:index>')
+def test_image(index):
+    """Test if an image is being served correctly"""
+    from flask import send_from_directory
+    import os
+    
+    image_files = [f for f in os.listdir('images') if f.endswith(('.jpg', '.png', '.webp', '.jpeg'))]
+    if index < len(image_files):
+        return send_from_directory('images', image_files[index])
+    return {"error": "Image not found"}, 404
+
+@app.route('/api/image-count')
+def image_count():
+    """Get count of available images"""
+    import os
+    image_files = [f for f in os.listdir('images') if f.endswith(('.jpg', '.png', '.webp', '.jpeg'))]
+    return {"count": len(image_files)}
+
 # ===== CREATE TABLES =====
 with app.app_context():
     try:
