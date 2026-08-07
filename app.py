@@ -9,6 +9,9 @@ import jwt
 from datetime import datetime, timedelta
 from functools import wraps
 import os
+import json
+from urllib import request as urlrequest
+from urllib.error import URLError
 from dotenv import load_dotenv
 from flask_caching import Cache
 from sqlalchemy import text
@@ -20,7 +23,8 @@ from database import db
 from models import (
     User, Deal, DealInterest, TrustReview, 
     InvestmentGroup, InvestmentCommitment, InvestmentMilestone,
-    PortfolioInvestment, DealChatMessage, DealChatParticipant, ChatMessage
+    PortfolioInvestment, DealChatMessage, DealChatParticipant, ChatMessage,
+    BlockedUser, ContentReport
 )
 
 # Load environment variables
@@ -30,7 +34,11 @@ load_dotenv()
 app = Flask(__name__)
 
 # 2. Configure app
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-change-me')
+is_production = bool(os.getenv('RAILWAY_ENVIRONMENT')) or os.getenv('ENVIRONMENT') == 'production'
+secret_key = os.getenv('SECRET_KEY')
+if is_production and not secret_key:
+    raise RuntimeError('SECRET_KEY must be set in production')
+app.config['SECRET_KEY'] = secret_key or 'dev-secret-change-me'
 
 # ===== POSTGRESQL CONNECTION =====
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -66,9 +74,17 @@ bcrypt = Bcrypt(app)
 cache = Cache(app)
 
 # CORS
-CORS(app, origins=["http://localhost:3000", "http://localhost:5000", "https://investbook-production.up.railway.app"])
-
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+allowed_origins = [
+    'http://localhost:3000',
+    'http://localhost:5000',
+    'https://investbook-production.up.railway.app',
+    'https://invest-book.com',
+    'https://www.invest-book.com',
+]
+if os.getenv('WEB_ORIGIN'):
+    allowed_origins.append(os.getenv('WEB_ORIGIN'))
+CORS(app, origins=allowed_origins)
+socketio = SocketIO(app, cors_allowed_origins=allowed_origins, async_mode='eventlet')
 
 # 4. Register blueprints
 from admin_dashboard import admin_bp
@@ -85,7 +101,7 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     db.session.rollback()
-    return jsonify({'error': 'Internal server error', 'message': str(error)}), 500
+    return jsonify({'error': 'Internal server error'}), 500
 
 # ===== ROUTES =====
 @app.route('/')
@@ -106,6 +122,32 @@ def home():
             'investments': '/api/investments [POST]'
         }
     })
+
+
+@app.route('/privacy')
+def privacy_policy():
+    """Public privacy-policy URL used by the app and App Store Connect."""
+    return '''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>invest-book_Pro Privacy Policy</title><style>body{font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.55;max-width:760px;margin:40px auto;padding:0 20px;color:#1f2937}h1,h2{color:#111827}a{color:#2563eb}</style></head><body>
+    <h1>invest-book_Pro Privacy Policy</h1><p>Last updated: August 6, 2026</p>
+    <h2>Information we collect</h2><p>We collect account details you provide, such as username and email address; content you submit, including listings and chat messages; subscription status; and activity needed to provide, secure, and improve InvestBook.</p>
+    <h2>How we use information</h2><p>We use information to operate the service, authenticate accounts, process subscriptions, moderate content, prevent fraud and abuse, and respond to support requests. We do not sell personal information.</p>
+    <h2>Service providers and sharing</h2><p>We use service providers for hosting, payment processing, and listing-data services. They may process information only to provide their services and must protect it appropriately. We may disclose information when required by law or to protect users and the service.</p>
+    <h2>Retention and deletion</h2><p>We retain information only as long as needed for the purposes above and legal obligations. You may permanently delete your account in the InvestBook app under Profile &gt; Delete Account. This removes your account and associated personal data unless retention is required by law. Apple subscriptions must be cancelled in your Apple Account subscription settings.</p>
+    <h2>Your choices</h2><p>You can update account information in the app, manage notifications in device settings, block users, report content, and request support. For privacy questions, contact <a href="mailto:privacy@invest-book.com">privacy@invest-book.com</a>.</p>
+    </body></html>''', 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+
+@app.route('/support')
+def support_page():
+    """Public support URL used by the App Store product page."""
+    return '''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>invest-book_Pro Support</title><style>body{font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.55;max-width:760px;margin:40px auto;padding:0 20px;color:#1f2937}h1,h2{color:#111827}a{color:#2563eb}</style></head><body>
+    <h1>invest-book_Pro Support</h1><p>Need help with InvestBook? Contact our support team and include the email address associated with your account.</p>
+    <p><a href="mailto:support@invest-book.com">support@invest-book.com</a></p>
+    <h2>Account and subscription help</h2><p>You can manage your profile in the app. To cancel or manage an Apple subscription, open Settings on your device, select your Apple Account, then choose Subscriptions.</p>
+    <h2>Privacy and account deletion</h2><p>You can permanently delete your account in the app under Profile &gt; Delete Account. For privacy questions, contact <a href="mailto:privacy@invest-book.com">privacy@invest-book.com</a>.</p>
+    <h2>Business and media inquiries</h2><p>For marketing, partnership, or media inquiries, contact <a href="mailto:marketing@invest-book.com">marketing@invest-book.com</a>.</p>
+    <p><a href="/privacy">Privacy Policy</a></p>
+    </body></html>''', 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 @app.route('/health')
 def health_check():
@@ -189,7 +231,7 @@ def register():
     except Exception as e:
         db.session.rollback()
         print(f"Registration error: {str(e)}")
-        return jsonify({'message': f'Registration failed: {str(e)}'}), 500
+        return jsonify({'message': 'Registration failed'}), 500
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -237,7 +279,7 @@ def login():
         
     except Exception as e:
         print(f"Login error: {str(e)}")
-        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/subscription-status', methods=['GET'])
 @token_required
@@ -485,7 +527,7 @@ def payment_success():
             </div>
             
             <div class="footer">
-                Questions? Contact us at <a href="mailto:support@investbook.com" style="color:#2563eb;text-decoration:none;">support@investbook.com</a>
+                Questions? Contact us at <a href="mailto:support@invest-book.com" style="color:#2563eb;text-decoration:none;">support@invest-book.com</a>
             </div>
         </div>
     </body>
@@ -589,7 +631,7 @@ def payment_cancel():
             <p style="margin-top:8px;">You can try again whenever you're ready to subscribe.</p>
             <a href="https://investbook-production.up.railway.app" class="btn-primary">Return to InvestBook</a>
             <div class="footer">
-                Questions? <a href="mailto:support@investbook.com">support@investbook.com</a>
+                Questions? <a href="mailto:support@invest-book.com">support@invest-book.com</a>
             </div>
         </div>
     </body>
@@ -679,7 +721,7 @@ def payment_error():
             </div>
             <a href="https://investbook-production.up.railway.app" class="button">Try Again</a>
             <div class="support">
-                Need help? <a href="mailto:support@investbook.com">Contact Support</a>
+                Need help? <a href="mailto:support@invest-book.com">Contact Support</a>
             </div>
         </div>
     </body>
@@ -1041,11 +1083,14 @@ def get_deal_chat_messages(current_user, deal_id):
         if not deal:
             return jsonify({'error': 'Deal not found'}), 404
         
-        # Get messages (not deleted)
+        # Hide messages from users the current user has blocked.
+        blocked_user_ids = [block.blocked_id for block in BlockedUser.query.filter_by(
+            blocker_id=current_user.id
+        ).all()]
         messages = DealChatMessage.query.filter_by(
             deal_id=deal_id,
             is_deleted=False
-        ).order_by(DealChatMessage.created_at.asc()).all()
+        ).filter(~DealChatMessage.user_id.in_(blocked_user_ids)).order_by(DealChatMessage.created_at.asc()).all()
         
         return jsonify([{
             'id': m.id,
@@ -1071,6 +1116,9 @@ def send_deal_chat_message(current_user, deal_id):
         
         if not message_text or not message_text.strip():
             return jsonify({'error': 'Message is required'}), 400
+        message_text = message_text.strip()
+        if len(message_text) > 2000:
+            return jsonify({'error': 'Messages must be 2,000 characters or fewer'}), 400
         
         # Check if deal exists
         deal = Deal.query.get(deal_id)
@@ -1096,7 +1144,7 @@ def send_deal_chat_message(current_user, deal_id):
         message = DealChatMessage(
             deal_id=deal_id,
             user_id=current_user.id,
-            message=message_text.strip()
+            message=message_text
         )
         db.session.add(message)
         db.session.commit()
@@ -1147,6 +1195,143 @@ def delete_deal_chat_message(current_user, deal_id, message_id):
         db.session.rollback()
         print(f"❌ Delete message error: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/users/<int:user_id>/block', methods=['POST', 'DELETE'])
+@token_required
+def block_user(current_user, user_id):
+    """Block or unblock another user from chats and participant lists."""
+    if user_id == current_user.id:
+        return jsonify({'error': 'You cannot block yourself'}), 400
+    if not User.query.get(user_id):
+        return jsonify({'error': 'User not found'}), 404
+
+    block = BlockedUser.query.filter_by(blocker_id=current_user.id, blocked_id=user_id).first()
+    if request.method == 'DELETE':
+        if block:
+            db.session.delete(block)
+            db.session.commit()
+        return jsonify({'blocked': False}), 200
+
+    if not block:
+        db.session.add(BlockedUser(blocker_id=current_user.id, blocked_id=user_id))
+        db.session.commit()
+    return jsonify({'blocked': True}), 201
+
+
+@app.route('/api/content-reports', methods=['POST'])
+@token_required
+def create_content_report(current_user):
+    """Create a moderation report for a chat message or deal."""
+    data = request.get_json(silent=True) or {}
+    reason = (data.get('reason') or '').strip()
+    if reason not in {'spam', 'harassment', 'fraud', 'inappropriate', 'other'}:
+        return jsonify({'error': 'A valid report reason is required'}), 400
+
+    message_id = data.get('message_id')
+    message = DealChatMessage.query.get(message_id) if message_id else None
+    if message_id and not message:
+        return jsonify({'error': 'Message not found'}), 404
+
+    report = ContentReport(
+        reporter_id=current_user.id,
+        reported_user_id=message.user_id if message else data.get('reported_user_id'),
+        deal_id=message.deal_id if message else data.get('deal_id'),
+        message_id=message.id if message else None,
+        reason=reason,
+        details=(data.get('details') or '').strip()[:2000],
+    )
+    db.session.add(report)
+    db.session.commit()
+    return jsonify({'message': 'Report received. Our team will review it.', 'report_id': report.id}), 201
+
+
+@app.route('/api/account', methods=['DELETE'])
+@token_required
+def delete_account(current_user):
+    """Permanently delete the signed-in user's account and personal data."""
+    try:
+        DealChatMessage.query.filter_by(user_id=current_user.id).delete(synchronize_session=False)
+        DealChatParticipant.query.filter_by(user_id=current_user.id).delete(synchronize_session=False)
+        ChatMessage.query.filter_by(user_id=current_user.id).delete(synchronize_session=False)
+        DealInterest.query.filter_by(user_id=current_user.id).delete(synchronize_session=False)
+        PortfolioInvestment.query.filter_by(user_id=current_user.id).delete(synchronize_session=False)
+        InvestmentCommitment.query.filter_by(investor_id=current_user.id).delete(synchronize_session=False)
+        TrustReview.query.filter((TrustReview.reviewer_id == current_user.id) | (TrustReview.reviewee_id == current_user.id)).delete(synchronize_session=False)
+        BlockedUser.query.filter((BlockedUser.blocker_id == current_user.id) | (BlockedUser.blocked_id == current_user.id)).delete(synchronize_session=False)
+        ContentReport.query.filter((ContentReport.reporter_id == current_user.id) | (ContentReport.reported_user_id == current_user.id)).delete(synchronize_session=False)
+        Deal.query.filter_by(sponsor_id=current_user.id).update({'status': 'removed'}, synchronize_session=False)
+        db.session.delete(current_user)
+        db.session.commit()
+        return jsonify({'message': 'Your account and associated personal data have been deleted.'}), 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Unable to delete account. Please contact support.'}), 500
+
+
+IOS_PRODUCT_PLANS = {
+    'com.jerryjiya.investbook.viewonly.monthly': 'view_only',
+    'com.jerryjiya.investbook.viewonly.yearly': 'view_only_yearly',
+    'com.jerryjiya.investbook.chat.monthly': 'chat',
+    'com.jerryjiya.investbook.chat.yearly': 'chat_yearly',
+}
+
+
+@app.route('/api/ios/verify-subscription', methods=['POST'])
+@token_required
+def verify_ios_subscription(current_user):
+    """Verify an App Store subscription receipt before granting premium access."""
+    shared_secret = os.getenv('APPLE_APP_SHARED_SECRET')
+    if not shared_secret:
+        return jsonify({'error': 'Apple subscription verification is not configured'}), 503
+
+    data = request.get_json(silent=True) or {}
+    receipt = data.get('receipt')
+    product_id = data.get('productId')
+    if not receipt or product_id not in IOS_PRODUCT_PLANS:
+        return jsonify({'error': 'Invalid subscription receipt'}), 400
+
+    def verify_with_apple(endpoint):
+        payload = json.dumps({
+            'receipt-data': receipt,
+            'password': shared_secret,
+            'exclude-old-transactions': True,
+        }).encode('utf-8')
+        apple_request = urlrequest.Request(endpoint, data=payload, headers={'Content-Type': 'application/json'})
+        with urlrequest.urlopen(apple_request, timeout=10) as response:
+            return json.loads(response.read().decode('utf-8'))
+
+    try:
+        result = verify_with_apple('https://buy.itunes.apple.com/verifyReceipt')
+        # Apple returns 21007 when a sandbox receipt is sent to production.
+        if result.get('status') == 21007:
+            result = verify_with_apple('https://sandbox.itunes.apple.com/verifyReceipt')
+    except (URLError, ValueError, TimeoutError):
+        return jsonify({'error': 'Unable to verify the Apple subscription right now'}), 503
+
+    if result.get('status') != 0:
+        return jsonify({'error': 'Apple rejected the subscription receipt'}), 400
+
+    transactions = result.get('latest_receipt_info') or result.get('receipt', {}).get('in_app', [])
+    valid_transactions = [
+        transaction for transaction in transactions
+        if transaction.get('product_id') == product_id
+        and int(transaction.get('expires_date_ms', '0')) > int(datetime.utcnow().timestamp() * 1000)
+    ]
+    if not valid_transactions:
+        return jsonify({'isSubscribed': False, 'error': 'No active subscription was found'}), 400
+
+    latest = max(valid_transactions, key=lambda transaction: int(transaction.get('expires_date_ms', '0')))
+    expiry = datetime.utcfromtimestamp(int(latest['expires_date_ms']) / 1000)
+    current_user.subscription_plan = IOS_PRODUCT_PLANS[product_id]
+    current_user.subscription_expiry = expiry
+    current_user.stripe_subscription_id = None
+    db.session.commit()
+    return jsonify({
+        'isSubscribed': True,
+        'planId': current_user.subscription_plan,
+        'expiryDate': expiry.isoformat(),
+    }), 200
 
 # ===== TEST IMAGE ENDPOINT =====
 @app.route('/api/test-image/<int:index>')
