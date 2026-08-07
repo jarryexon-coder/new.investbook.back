@@ -135,3 +135,26 @@ class ChatMessage(db.Model):
     read = db.Column(db.Boolean, default=False)
     user = db.relationship('User', backref='chat_messages')
     deal = db.relationship('Deal', backref='chat_messages')
+
+
+class BlockedUser(db.Model):
+    __tablename__ = 'blocked_users'
+    id = db.Column(db.Integer, primary_key=True)
+    blocker_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    blocked_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (db.UniqueConstraint('blocker_id', 'blocked_id', name='uq_blocked_users'),)
+
+
+class ContentReport(db.Model):
+    __tablename__ = 'content_reports'
+    id = db.Column(db.Integer, primary_key=True)
+    reporter_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    reported_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    deal_id = db.Column(db.Integer, db.ForeignKey('deals.id'), nullable=True)
+    message_id = db.Column(db.Integer, db.ForeignKey('deal_chat_messages.id'), nullable=True)
+    reason = db.Column(db.String(80), nullable=False)
+    details = db.Column(db.Text, default='')
+    status = db.Column(db.String(30), default='open', nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
